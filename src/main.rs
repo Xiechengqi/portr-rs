@@ -134,7 +134,6 @@ Environment:
   PORTR_RS_USE_LOCALHOST         Use http for localhost-style domains, default true
   PORTR_RS_LEASE_TTL_SECS        Tunnel lease ttl, default 60
   PORTR_RS_DB_PATH               SQLite path, default $HOME/.config/portr-rs/portr-rs.db
-  PORTR_RS_ADMIN_TOKEN           Admin login token
   PORTR_RS_CLEANUP_INTERVAL_SECS Cleanup interval, default 300
   PORTR_RS_LEASE_RETENTION_SECS  Lease retention period, default 604800
 

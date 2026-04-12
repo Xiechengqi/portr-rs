@@ -301,7 +301,7 @@
         <span class="eyebrow"><span class="dot"></span>portr-rs console</span>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span class="refresh-note">Auto refresh every 5s · last sync <span id="last-sync">n/a</span></span>
-          <button id="logout-btn" style="border:1px solid var(--border);background:white;color:var(--foreground);padding:10px 14px;border-radius:999px;cursor:pointer">Logout</button>
+          <span class="pill">Public dashboard</span>
         </div>
       </div>
       <section class="hero">
@@ -384,9 +384,8 @@
 
       async function boot() {
         const response = await fetch("/v1/dashboard");
-        if (response.status === 401) {
-          window.location.href = "/admin/login";
-          return;
+        if (!response.ok) {
+          throw new Error(`Failed to fetch dashboard data: ${response.status}`);
         }
         const data = await response.json();
         document.getElementById("last-sync").textContent = formatTime(data.generatedAt);
@@ -473,10 +472,6 @@
       setInterval(() => {
         boot().catch((error) => console.error(error));
       }, 5000);
-      document.getElementById("logout-btn").addEventListener("click", async () => {
-        await fetch("/v1/admin/logout", { method: "POST" });
-        window.location.href = "/admin/login";
-      });
     </script>
   </body>
 </html>

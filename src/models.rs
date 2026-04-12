@@ -72,12 +72,6 @@ pub struct ShareDeleteRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AdminLoginRequest {
-    pub token: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ShareBatchSyncRequest {
     pub installation_id: String,
     pub ops: Vec<ShareSyncOperation>,

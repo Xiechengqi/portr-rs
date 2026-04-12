@@ -13,7 +13,6 @@ pub struct Config {
     pub use_localhost: bool,
     pub lease_ttl_secs: i64,
     pub db_path: PathBuf,
-    pub admin_token: String,
     pub cleanup_interval_secs: u64,
     pub lease_retention_secs: i64,
 }
@@ -41,8 +40,6 @@ impl Config {
             db_path: env::var("PORTR_RS_DB_PATH")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| default_db_path()),
-            admin_token: env::var("PORTR_RS_ADMIN_TOKEN")
-                .unwrap_or_else(|_| "change-me-admin-token".to_string()),
             cleanup_interval_secs: env::var("PORTR_RS_CLEANUP_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -129,7 +126,6 @@ PORTR_RS_TUNNEL_DOMAIN=0.0.0.0:8787
 PORTR_RS_USE_LOCALHOST=true
 PORTR_RS_LEASE_TTL_SECS=60
 PORTR_RS_DB_PATH={}
-PORTR_RS_ADMIN_TOKEN=change-me-admin-token
 PORTR_RS_CLEANUP_INTERVAL_SECS=300
 PORTR_RS_LEASE_RETENTION_SECS=604800
 ",

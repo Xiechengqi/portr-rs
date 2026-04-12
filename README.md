@@ -16,9 +16,6 @@
 - `POST /v1/shares/batch-sync`
 - `POST /v1/shares/delete`
 - `GET /admin`
-- `GET /admin/login`
-- `POST /v1/admin/login`
-- `POST /v1/admin/logout`
 - 基于 `russh` 的一次性 SSH 密码认证
 - 基于 Host subdomain 的最小 HTTP 反向代理
 
@@ -36,7 +33,6 @@
 - `PORTR_RS_USE_LOCALHOST`
 - `PORTR_RS_LEASE_TTL_SECS`
 - `PORTR_RS_DB_PATH`，默认 `$HOME/.config/portr-rs/portr-rs.db`
-- `PORTR_RS_ADMIN_TOKEN`
 - `PORTR_RS_CLEANUP_INTERVAL_SECS`
 - `PORTR_RS_LEASE_RETENTION_SECS`
 
@@ -45,6 +41,8 @@
 - `$HOME/.config/portr-rs/.env`
 
 启动时如果这个文件不存在，`portr-rs` 会自动生成默认 `.env`，然后按该文件加载配置。进程环境变量优先级更高，会覆盖 `.env` 里的同名配置。
+
+`/admin` 和 `/v1/dashboard` 默认公开可读，不需要登录。
 
 启动：
 
@@ -143,7 +141,6 @@ PORTR_RS_SSH_ADDR=0.0.0.0:2222
 PORTR_RS_TUNNEL_DOMAIN=your-domain.example.com
 PORTR_RS_USE_LOCALHOST=false
 PORTR_RS_DB_PATH=$HOME/.config/portr-rs/portr-rs.db
-PORTR_RS_ADMIN_TOKEN=change-me-admin-token
 EOF
 ```
 
@@ -187,10 +184,10 @@ curl http://127.0.0.1:8787/v1/healthz
 {"ok":true}
 ```
 
-控制台登录页：
+控制台地址：
 
 ```text
-http://127.0.0.1:8787/admin/login
+http://127.0.0.1:8787/admin
 ```
 
 ### 7. systemd 部署示例
@@ -228,12 +225,6 @@ sudo systemctl status portr-rs
 
 ```text
 http://127.0.0.1:8787/admin
-```
-
-默认需要 admin token 才能访问 `/admin` 和 `/v1/dashboard`：
-
-```bash
-export PORTR_RS_ADMIN_TOKEN=your-admin-token
 ```
 
 当前限制：
