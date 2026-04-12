@@ -80,6 +80,8 @@ chmod +x ./build.sh
 - 生成 `.tar.gz` 发布包
 - 生成 `sha256` 校验文件（系统支持时）
 
+这里的 `.tar.gz` 仅用于本地构建验证，不是推荐部署方式。
+
 可选环境变量：
 
 ```bash
@@ -91,37 +93,26 @@ BUILD_MODE=debug ./build.sh
 
 ### 1. 准备发布包
 
-执行：
+GitHub Actions 会在 `main` 分支自动构建 Ubuntu AMD64 二进制，并更新 `latest` Release。部署时直接下载 release binary：
 
 ```bash
-./build.sh
+wget https://github.com/<owner>/<repo>/releases/download/latest/portr-rs-linux-amd64 -O portr-rs
+chmod +x portr-rs
 ```
-
-产物会出现在：
-
-- `dist/portr-rs_<version>.tar.gz`
-- 或 `dist/portr-rs_<version>_<target>.tar.gz`
-
-发布包内包含：
-
-- `portr-rs` 二进制
-- `README.md`
-- `ARCHITECTURE.md`
-- `portr-rs.env.example`
 
 ### GitHub Release
 
-GitHub Actions 会在 `main` 分支自动构建 Ubuntu AMD64 二进制，并更新 `latest` Release。Release 只附带单个二进制文件：
+GitHub Actions 会在 `main` 分支自动构建 Ubuntu AMD64 二进制，并更新 `latest` Release。GitHub Release 不上传 `.tar.gz`，只附带单个二进制文件：
 
 - `portr-rs-linux-amd64`
 
-### 2. 服务器解压
+### 2. 放置二进制
 
 示例：
 
 ```bash
 mkdir -p /opt/portr-rs
-tar -C /opt/portr-rs -xzf portr-rs_0.1.0.tar.gz --strip-components=1
+mv portr-rs /opt/portr-rs/portr-rs
 ```
 
 ### 3. 准备运行目录
@@ -131,16 +122,6 @@ tar -C /opt/portr-rs -xzf portr-rs_0.1.0.tar.gz --strip-components=1
 ```text
 /opt/portr-rs/
   portr-rs
-  README.md
-  ARCHITECTURE.md
-  portr-rs.env.example
-  data/
-```
-
-然后创建数据目录：
-
-```bash
-mkdir -p /opt/portr-rs/data
 ```
 
 ### 4. 配置环境变量

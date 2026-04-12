@@ -103,8 +103,7 @@ jobs:
             ### Quick download
 
             ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/latest/${{ steps.version.outputs.asset }} -O portr-rs
-            chmod +x portr-rs
+            wget https://github.com/${{ github.repository }}/releases/download/latest/${{ steps.version.outputs.asset }} -O /usr/local/bin/portr-rs && chmod +x /usr/local/bin/portr-rs
             ```
           files: release-files/*
           prerelease: false
