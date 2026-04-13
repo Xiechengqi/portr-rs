@@ -77,6 +77,13 @@ pub struct ShareBatchSyncRequest {
     pub ops: Vec<ShareSyncOperation>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareRequestLogBatchSyncRequest {
+    pub installation_id: String,
+    pub logs: Vec<ShareRequestLogEntry>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareSyncOperation {
@@ -85,6 +92,31 @@ pub struct ShareSyncOperation {
     pub share: Option<ShareDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub share_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareRequestLogEntry {
+    pub request_id: String,
+    pub share_id: String,
+    pub share_name: String,
+    pub provider_id: String,
+    pub provider_name: String,
+    pub app_type: String,
+    pub model: String,
+    pub request_model: String,
+    pub status_code: u16,
+    pub latency_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_ms: Option<u64>,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cache_read_tokens: u32,
+    pub cache_creation_tokens: u32,
+    pub is_streaming: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -185,4 +217,5 @@ pub struct ShareView {
     pub latest_subdomain: String,
     pub installation_id: String,
     pub active_lease_count: usize,
+    pub recent_requests: Vec<ShareRequestLogEntry>,
 }

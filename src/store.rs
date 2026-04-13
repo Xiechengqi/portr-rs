@@ -14,8 +14,8 @@ use crate::error::AppError;
 use crate::models::{
     DashboardResponse, DashboardStats, Installation, InstallationView, IssueLeaseRequest,
     IssueLeaseResponse, LeaseView, RegisterInstallationRequest, RegisterInstallationResponse,
-    ShareBatchSyncRequest, ShareDeleteRequest, ShareDescriptor, ShareSyncRequest, ShareView,
-    TunnelLease,
+    ShareBatchSyncRequest, ShareDeleteRequest, ShareDescriptor, ShareRequestLogBatchSyncRequest,
+    ShareRequestLogEntry, ShareSyncRequest, ShareView, TunnelLease,
 };
 use crate::proxy::ProxyRegistry;
 
@@ -285,6 +285,27 @@ impl AppStore {
         Ok(())
     }
 
+    pub async fn batch_sync_share_request_logs(
+        &self,
+        input: ShareRequestLogBatchSyncRequest,
+    ) -> Result<(), AppError> {
+        let conn = self.conn.lock().await;
+        let exists = get_installation(&conn, &input.installation_id)?.is_some();
+        if !exists {
+            return Err(AppError::Unauthorized("installation not found".into()));
+        }
+
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Internal(format!("begin request log batch sync tx failed: {e}")))?;
+        for log in input.logs {
+            upsert_share_request_log_tx(&tx, &input.installation_id, log)?;
+        }
+        tx.commit()
+            .map_err(|e| AppError::Internal(format!("commit request log batch sync failed: {e}")))?;
+        Ok(())
+    }
+
     pub async fn dashboard_snapshot(
         &self,
         proxy: &ProxyRegistry,
@@ -296,6 +317,13 @@ impl AppStore {
         let installations = list_installations(&conn)?;
         let leases = list_leases(&conn)?;
         let shares = list_shares(&conn)?;
+        let recent_logs = list_recent_share_request_logs(&conn, 8)?;
+        let logs_by_share = recent_logs
+            .into_iter()
+            .fold(HashMap::<String, Vec<ShareRequestLogEntry>>::new(), |mut acc, log| {
+                acc.entry(log.share_id.clone()).or_default().push(log);
+                acc
+            });
 
         let mut leases_by_installation: HashMap<String, Vec<TunnelLease>> = HashMap::new();
         for lease in leases {
@@ -349,6 +377,10 @@ impl AppStore {
                     if active_lease_count > 0 {
                         active_share_ids.insert(share.share_id.clone());
                     }
+                    let recent_requests = logs_by_share
+                        .get(&share.share_id)
+                        .cloned()
+                        .unwrap_or_default();
                     ShareView {
                         share_id: share.share_id,
                         share_name: share.share_name,
@@ -364,6 +396,7 @@ impl AppStore {
                         latest_subdomain,
                         installation_id,
                         active_lease_count,
+                        recent_requests,
                     }
                 },
             )
@@ -411,6 +444,16 @@ impl AppStore {
             )
             .map_err(|e| AppError::Internal(format!("delete stale shares failed: {e}")))?
             as usize;
+
+        let _deleted_request_logs = tx
+            .execute(
+                "DELETE FROM share_request_logs
+                 WHERE created_at < ?1",
+                params![DateTime::parse_from_rfc3339(&cutoff)
+                    .map(|dt| dt.timestamp())
+                    .unwrap_or_default()],
+            )
+            .map_err(|e| AppError::Internal(format!("delete stale request logs failed: {e}")))?;
 
         tx.commit()
             .map_err(|e| AppError::Internal(format!("commit cleanup tx failed: {e}")))?;
@@ -472,6 +515,63 @@ fn upsert_share_tx(
     Ok(())
 }
 
+fn upsert_share_request_log_tx(
+    conn: &Connection,
+    installation_id: &str,
+    log: ShareRequestLogEntry,
+) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT INTO share_request_logs (
+            request_id, installation_id, share_id, share_name, provider_id, provider_name,
+            app_type, model, request_model, status_code, latency_ms, first_token_ms,
+            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            is_streaming, session_id, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+        ON CONFLICT(request_id) DO UPDATE SET
+            installation_id = excluded.installation_id,
+            share_id = excluded.share_id,
+            share_name = excluded.share_name,
+            provider_id = excluded.provider_id,
+            provider_name = excluded.provider_name,
+            app_type = excluded.app_type,
+            model = excluded.model,
+            request_model = excluded.request_model,
+            status_code = excluded.status_code,
+            latency_ms = excluded.latency_ms,
+            first_token_ms = excluded.first_token_ms,
+            input_tokens = excluded.input_tokens,
+            output_tokens = excluded.output_tokens,
+            cache_read_tokens = excluded.cache_read_tokens,
+            cache_creation_tokens = excluded.cache_creation_tokens,
+            is_streaming = excluded.is_streaming,
+            session_id = excluded.session_id,
+            created_at = excluded.created_at",
+        params![
+            log.request_id,
+            installation_id,
+            log.share_id,
+            log.share_name,
+            log.provider_id,
+            log.provider_name,
+            log.app_type,
+            log.model,
+            log.request_model,
+            i64::from(log.status_code),
+            log.latency_ms as i64,
+            log.first_token_ms.map(|v| v as i64),
+            i64::from(log.input_tokens),
+            i64::from(log.output_tokens),
+            i64::from(log.cache_read_tokens),
+            i64::from(log.cache_creation_tokens),
+            i64::from(log.is_streaming as u8),
+            log.session_id,
+            log.created_at,
+        ],
+    )
+    .map_err(|e| AppError::Internal(format!("upsert share request log failed: {e}")))?;
+    Ok(())
+}
+
 fn init_schema(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
         "
@@ -514,9 +614,32 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS share_request_logs (
+            request_id TEXT PRIMARY KEY,
+            installation_id TEXT NOT NULL,
+            share_id TEXT NOT NULL,
+            share_name TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            provider_name TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            model TEXT NOT NULL,
+            request_model TEXT NOT NULL,
+            status_code INTEGER NOT NULL,
+            latency_ms INTEGER NOT NULL,
+            first_token_ms INTEGER,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER NOT NULL,
+            is_streaming INTEGER NOT NULL,
+            session_id TEXT,
+            created_at INTEGER NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_leases_installation_id ON leases(installation_id);
         CREATE INDEX IF NOT EXISTS idx_leases_subdomain ON leases(subdomain);
         CREATE INDEX IF NOT EXISTS idx_shares_installation_id ON shares(installation_id);
+        CREATE INDEX IF NOT EXISTS idx_share_request_logs_share_id ON share_request_logs(share_id, created_at DESC);
         ",
     )
     .map_err(|e| AppError::Internal(format!("init schema failed: {e}")))?;
@@ -641,6 +764,55 @@ fn list_shares(
             ))
         })
         .map_err(|e| AppError::Internal(format!("query shares failed: {e}")))?;
+    collect_rows(rows)
+}
+
+fn list_recent_share_request_logs(
+    conn: &Connection,
+    per_share_limit: usize,
+) -> Result<Vec<ShareRequestLogEntry>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT request_id, share_id, share_name, provider_id, provider_name, app_type, model,
+                    request_model, status_code, latency_ms, first_token_ms, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens, is_streaming,
+                    session_id, created_at
+             FROM (
+                 SELECT request_id, share_id, share_name, provider_id, provider_name, app_type, model,
+                        request_model, status_code, latency_ms, first_token_ms, input_tokens,
+                        output_tokens, cache_read_tokens, cache_creation_tokens, is_streaming,
+                        session_id, created_at,
+                        ROW_NUMBER() OVER (PARTITION BY share_id ORDER BY created_at DESC) AS row_num
+                 FROM share_request_logs
+             )
+             WHERE row_num <= ?1
+             ORDER BY created_at DESC",
+        )
+        .map_err(|e| AppError::Internal(format!("prepare recent share request logs failed: {e}")))?;
+    let rows = stmt
+        .query_map(params![per_share_limit as i64], |row| {
+            Ok(ShareRequestLogEntry {
+                request_id: row.get(0)?,
+                share_id: row.get(1)?,
+                share_name: row.get(2)?,
+                provider_id: row.get(3)?,
+                provider_name: row.get(4)?,
+                app_type: row.get(5)?,
+                model: row.get(6)?,
+                request_model: row.get(7)?,
+                status_code: row.get::<_, i64>(8)? as u16,
+                latency_ms: row.get::<_, i64>(9)? as u64,
+                first_token_ms: row.get::<_, Option<i64>>(10)?.map(|v| v as u64),
+                input_tokens: row.get::<_, i64>(11)? as u32,
+                output_tokens: row.get::<_, i64>(12)? as u32,
+                cache_read_tokens: row.get::<_, i64>(13)? as u32,
+                cache_creation_tokens: row.get::<_, i64>(14)? as u32,
+                is_streaming: row.get::<_, i64>(15)? != 0,
+                session_id: row.get(16)?,
+                created_at: row.get(17)?,
+            })
+        })
+        .map_err(|e| AppError::Internal(format!("query recent share request logs failed: {e}")))?;
     collect_rows(rows)
 }
 

@@ -283,6 +283,30 @@
         font-size: 12px;
         color: rgba(255,255,255,0.92);
       }
+      .share-request-stack {
+        margin-top: 12px;
+        display: grid;
+        gap: 10px;
+      }
+      .share-request-item {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(255,255,255,0.06);
+      }
+      .share-request-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .share-request-meta {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        color: rgba(255,255,255,0.72);
+        font-size: 12px;
+      }
       .empty {
         padding: 28px;
         border-radius: 22px;
@@ -375,6 +399,12 @@
         return `${value.slice(0, 4)}••••${value.slice(-4)}`;
       };
 
+      const totalTokens = (item) =>
+        (item.inputTokens || 0) +
+        (item.outputTokens || 0) +
+        (item.cacheReadTokens || 0) +
+        (item.cacheCreationTokens || 0);
+
       const statItems = [
         ["Installations", "installations"],
         ["Tracked Shares", "shares"],
@@ -460,6 +490,23 @@
               <strong>${share.latestSubdomain}</strong>
               <div class="token-meta">
                 <span>installation ${share.installationId.slice(0, 8)}</span>
+              </div>
+              <div class="share-request-stack">
+                ${share.recentRequests?.length ? share.recentRequests.map((log) => `
+                  <div class="share-request-item">
+                    <div class="share-request-head">
+                      <strong>${log.model || log.requestModel || "-"}</strong>
+                      <span class="badge">${log.statusCode}</span>
+                    </div>
+                    <div class="share-request-meta">
+                      <span>${formatTime((log.createdAt || 0) * 1000)}</span>
+                      <span>${log.providerName || log.providerId}</span>
+                      <span>${totalTokens(log)} tokens</span>
+                      <span>${log.latencyMs} ms</span>
+                      <span>${log.isStreaming ? "stream" : "request"}</span>
+                    </div>
+                  </div>
+                `).join("") : '<div class="share-request-item"><span class="muted">No request logs synced yet.</span></div>'}
               </div>
             </td>
           </tr>

@@ -4,6 +4,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
+use tracing::{info, warn};
 
 use crate::ServerState;
 
@@ -38,30 +39,42 @@ impl ProxyRegistry {
 
 pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
+    let method = parts.method.clone();
     let host = parts
         .headers
         .get("host")
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
+    let token = parts
+        .headers
+        .get("x-share-token")
+        .and_then(|value| value.to_str().ok())
+        .map(mask_token);
+    let path_and_query = parts
+        .uri
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| "/".to_string());
 
     let Some(backend) = state
         .proxy
         .backend_for_host(&host, &state.config.tunnel_domain)
         .await
     else {
+        warn!(
+            method = %method,
+            host = %host,
+            path = %path_and_query,
+            share_token = token.as_deref().unwrap_or("-"),
+            "proxy request rejected: unregistered subdomain"
+        );
         return simple_response(StatusCode::NOT_FOUND, "unregistered-subdomain");
     };
 
-    let path_and_query = parts
-        .uri
-        .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or("/");
     let target = format!("http://{backend}{path_and_query}");
 
-    let method = parts.method.clone();
-    let mut builder = reqwest::Client::new().request(method, target);
+    let mut builder = reqwest::Client::new().request(method.clone(), target);
     for (name, value) in &parts.headers {
         if name.as_str().eq_ignore_ascii_case("host") || is_hop_by_hop_header(name.as_str()) {
             continue;
@@ -72,6 +85,15 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
     let body = match axum::body::to_bytes(body, usize::MAX).await {
         Ok(body) => body,
         Err(err) => {
+            warn!(
+                method = %method,
+                host = %host,
+                path = %path_and_query,
+                backend = %backend,
+                share_token = token.as_deref().unwrap_or("-"),
+                error = %err,
+                "proxy request body read failed"
+            );
             return simple_response(
                 StatusCode::BAD_REQUEST,
                 &format!("failed-to-read-body: {err}"),
@@ -82,6 +104,15 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
     let upstream = match builder.body(body).send().await {
         Ok(response) => response,
         Err(err) => {
+            warn!(
+                method = %method,
+                host = %host,
+                path = %path_and_query,
+                backend = %backend,
+                share_token = token.as_deref().unwrap_or("-"),
+                error = %err,
+                "proxy upstream request failed"
+            );
             return simple_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 &format!("connection-lost: {err}"),
@@ -102,6 +133,15 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         response.headers_mut().insert(name, value.clone());
     }
     strip_connection_listed_headers(response.headers_mut());
+    info!(
+        method = %method,
+        host = %host,
+        path = %path_and_query,
+        backend = %backend,
+        status = %status.as_u16(),
+        share_token = token.as_deref().unwrap_or("-"),
+        "proxy request completed"
+    );
     response
 }
 
@@ -145,4 +185,11 @@ fn strip_connection_listed_headers(headers: &mut HeaderMap) {
     for header in connection_values {
         headers.remove(header);
     }
+}
+
+fn mask_token(token: &str) -> String {
+    if token.len() <= 8 {
+        return "*".repeat(token.len());
+    }
+    format!("{}...{}", &token[..4], &token[token.len() - 4..])
 }

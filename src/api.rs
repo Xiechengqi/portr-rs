@@ -11,7 +11,7 @@ use crate::error::AppError;
 use crate::models::{
     DashboardResponse, HealthResponse, IssueLeaseRequest, IssueLeaseResponse,
     RegisterInstallationRequest, RegisterInstallationResponse, ShareBatchSyncRequest,
-    ShareDeleteRequest, ShareSyncRequest,
+    ShareDeleteRequest, ShareRequestLogBatchSyncRequest, ShareSyncRequest,
 };
 use crate::proxy::proxy_handler;
 
@@ -25,6 +25,7 @@ pub fn router(state: ServerState) -> Router {
         .route("/v1/tunnels/lease", post(issue_lease))
         .route("/v1/shares/sync", post(sync_share))
         .route("/v1/shares/batch-sync", post(batch_sync_share))
+        .route("/v1/share-request-logs/batch-sync", post(batch_sync_share_request_logs))
         .route("/v1/shares/delete", post(delete_share))
         .route("/admin", get(admin_page))
         .route("/admin/login", get(root))
@@ -94,5 +95,13 @@ async fn batch_sync_share(
     Json(input): Json<ShareBatchSyncRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     state.store.batch_sync_shares(input).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn batch_sync_share_request_logs(
+    State(state): State<ServerState>,
+    Json(input): Json<ShareRequestLogBatchSyncRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    state.store.batch_sync_share_request_logs(input).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
