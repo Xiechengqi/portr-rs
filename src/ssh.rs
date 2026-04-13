@@ -118,8 +118,12 @@ impl server::Handler for ClientHandler {
         let bound_port = listener.local_addr()?.port();
         *port = bound_port as u32;
         let backend = format!("{host}:{port}");
+        let share_token = lease
+            .share
+            .as_ref()
+            .map(|s| s.share_token.clone());
         self.proxy
-            .set_route(lease.subdomain.clone(), backend.clone())
+            .set_route(lease.subdomain.clone(), backend.clone(), share_token)
             .await;
         self.backend = Some(backend.clone());
         let handle = session.handle();

@@ -8,28 +8,56 @@ use tracing::{info, warn};
 
 use crate::ServerState;
 
+/// Per-subdomain routing info.
+#[derive(Debug)]
+struct RouteEntry {
+    backend: String,
+    /// Share token to inject as X-Share-Token when proxying.
+    /// None for non-share tunnels.
+    share_token: Option<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct ProxyRegistry {
-    routes: RwLock<HashMap<String, String>>,
+    routes: RwLock<HashMap<String, RouteEntry>>,
 }
 
 impl ProxyRegistry {
-    pub async fn set_route(&self, subdomain: String, backend: String) {
-        self.routes.write().await.insert(subdomain, backend);
+    pub async fn set_route(
+        &self,
+        subdomain: String,
+        backend: String,
+        share_token: Option<String>,
+    ) {
+        self.routes.write().await.insert(
+            subdomain,
+            RouteEntry {
+                backend,
+                share_token,
+            },
+        );
     }
 
     pub async fn remove_route(&self, subdomain: &str) {
         self.routes.write().await.remove(subdomain);
     }
 
-    pub async fn backend_for_host(&self, host: &str, tunnel_domain: &str) -> Option<String> {
+    pub async fn backend_for_host(
+        &self,
+        host: &str,
+        tunnel_domain: &str,
+    ) -> Option<(String, Option<String>)> {
         let host_without_port = host.split(':').next().unwrap_or(host);
         let suffix = format!(".{tunnel_domain}");
         if !host_without_port.ends_with(&suffix) {
             return None;
         }
         let subdomain = host_without_port.trim_end_matches(&suffix);
-        self.routes.read().await.get(subdomain).cloned()
+        self.routes
+            .read()
+            .await
+            .get(subdomain)
+            .map(|e| (e.backend.clone(), e.share_token.clone()))
     }
 
     pub async fn active_subdomains(&self) -> Vec<String> {
@@ -46,18 +74,13 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    let token = parts
-        .headers
-        .get("x-share-token")
-        .and_then(|value| value.to_str().ok())
-        .map(mask_token);
     let path_and_query = parts
         .uri
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/".to_string());
 
-    let Some(backend) = state
+    let Some((backend, route_share_token)) = state
         .proxy
         .backend_for_host(&host, &state.config.tunnel_domain)
         .await
@@ -66,21 +89,44 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
             method = %method,
             host = %host,
             path = %path_and_query,
-            share_token = token.as_deref().unwrap_or("-"),
             "proxy request rejected: unregistered subdomain"
         );
         return simple_response(StatusCode::NOT_FOUND, "unregistered-subdomain");
     };
 
+    // Determine effective share token: prefer client-supplied header,
+    // fall back to the token registered with this tunnel route.
+    let client_token = parts
+        .headers
+        .get("x-share-token")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let effective_token = client_token.or(route_share_token);
+
     let target = format!("http://{backend}{path_and_query}");
 
     let mut builder = reqwest::Client::new().request(method.clone(), target);
     for (name, value) in &parts.headers {
-        if name.as_str().eq_ignore_ascii_case("host") || is_hop_by_hop_header(name.as_str()) {
+        let n = name.as_str();
+        if n.eq_ignore_ascii_case("host") || is_hop_by_hop_header(n) {
+            continue;
+        }
+        // Skip client-supplied x-share-token; we inject the effective one below.
+        if n.eq_ignore_ascii_case("x-share-token") {
             continue;
         }
         builder = builder.header(name, value);
     }
+
+    // Inject effective share token so cc-switch can track share usage.
+    if let Some(ref tok) = effective_token {
+        builder = builder.header("X-Share-Token", tok.as_str());
+    }
+
+    let log_token = effective_token
+        .as_deref()
+        .map(mask_token)
+        .unwrap_or_else(|| "-".to_string());
 
     let body = match axum::body::to_bytes(body, usize::MAX).await {
         Ok(body) => body,
@@ -90,7 +136,7 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
                 host = %host,
                 path = %path_and_query,
                 backend = %backend,
-                share_token = token.as_deref().unwrap_or("-"),
+                share_token = %log_token,
                 error = %err,
                 "proxy request body read failed"
             );
@@ -109,7 +155,7 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
                 host = %host,
                 path = %path_and_query,
                 backend = %backend,
-                share_token = token.as_deref().unwrap_or("-"),
+                share_token = %log_token,
                 error = %err,
                 "proxy upstream request failed"
             );
@@ -125,8 +171,7 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
 
     // Stream the response body instead of buffering it entirely.
     // This is critical for SSE (text/event-stream) responses so that
-    // downstream clients receive chunks in real time and cc-switch's
-    // usage collector fires correctly when the stream ends.
+    // downstream clients receive chunks in real time.
     let body_stream = upstream.bytes_stream();
     let body = Body::from_stream(body_stream);
 
@@ -146,7 +191,7 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         path = %path_and_query,
         backend = %backend,
         status = %status.as_u16(),
-        share_token = token.as_deref().unwrap_or("-"),
+        share_token = %log_token,
         "proxy request completed"
     );
     response
