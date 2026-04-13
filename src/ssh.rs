@@ -10,13 +10,11 @@ use russh::{Channel, ChannelId, server};
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
-use crate::config::Config;
 use crate::proxy::ProxyRegistry;
 use crate::store::AppStore;
 
 #[derive(Clone)]
 pub struct SshServer {
-    pub config: Config,
     pub store: AppStore,
     pub proxy: Arc<ProxyRegistry>,
 }
@@ -30,7 +28,7 @@ struct ClientHandler {
 }
 
 impl SshServer {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run_with_listener(self, listener: TcpListener) -> Result<()> {
         let mut config = server::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(300)),
             auth_rejection_time: std::time::Duration::from_secs(1),
@@ -38,9 +36,7 @@ impl SshServer {
         };
         config.keys.push(KeyPair::generate_ed25519());
         let config = Arc::new(config);
-        let listener = TcpListener::bind(self.config.ssh_addr).await?;
-        info!("ssh listening on {}", self.config.ssh_addr);
-
+        info!("ssh listening on {}", listener.local_addr()?);
         loop {
             let (socket, peer) = listener.accept().await?;
             let config = config.clone();

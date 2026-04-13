@@ -62,7 +62,6 @@ async fn main() -> Result<()> {
     };
 
     let ssh_server = ssh::SshServer {
-        config: config.clone(),
         store: state.store.clone(),
         proxy: state.proxy.clone(),
     };
@@ -70,7 +69,9 @@ async fn main() -> Result<()> {
     let cleanup_config = config.clone();
 
     let http_listener = TcpListener::bind(config.api_addr).await?;
+    let ssh_listener = TcpListener::bind(config.ssh_addr).await?;
     info!("http listening on {}", config.api_addr);
+    info!("ssh listener bound on {}", config.ssh_addr);
 
     let cleanup_task = tokio::spawn(async move {
         let mut interval =
@@ -88,17 +89,24 @@ async fn main() -> Result<()> {
             }
         }
     });
-    let ssh_task = tokio::spawn(async move { ssh_server.run().await });
+    let ssh_task = tokio::spawn(async move { ssh_server.run_with_listener(ssh_listener).await });
     let http_task = tokio::spawn(async move {
         axum::serve(http_listener, api::router(state)).await?;
         Ok::<_, anyhow::Error>(())
     });
 
-    let (ssh_result, http_result, cleanup_result) = tokio::join!(ssh_task, http_task, cleanup_task);
-    ssh_result??;
-    http_result??;
-    let _ = cleanup_result;
-    Ok(())
+    tokio::select! {
+        ssh_result = ssh_task => {
+            cleanup_task.abort();
+            ssh_result??;
+            Ok(())
+        }
+        http_result = http_task => {
+            cleanup_task.abort();
+            http_result??;
+            Ok(())
+        }
+    }
 }
 
 fn try_handle_cli() -> Result<bool> {
