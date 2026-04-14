@@ -574,11 +574,13 @@
         // Render 10 slots including the current minute: oldest (now-9m) → newest (now).
         for (let i = total - 1; i >= 0; i--) {
           const bucket = Math.floor((now - i * 60) / 60);
-          const hit = hitMinutes.has(bucket);
+          const isCurrentBucket = i === 0;
+          const hit = hitMinutes.has(bucket) || isCurrentBucket;
           const cls = hit ? "health-dot--ok" : "health-dot--fail";
           const bucketDate = new Date(bucket * 60 * 1000);
           const rel = relTimeFromDate(bucketDate);
-          dots.push(`<span class="health-dot ${cls}" title="${rel} — ${hit ? 'ok' : 'no heartbeat'}"></span>`);
+          const statusText = hitMinutes.has(bucket) || isCurrentBucket ? "ok" : "no heartbeat";
+          dots.push(`<span class="health-dot ${cls}" title="${rel} — ${statusText}"></span>`);
         }
         return `<span class="health-dots">${dots.join("")}</span>`;
       }
