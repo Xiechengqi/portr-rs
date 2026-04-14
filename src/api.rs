@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::routing::{any, get, post};
 use axum::{Json, Router, response::Html};
 
@@ -19,6 +19,7 @@ use crate::proxy::proxy_handler;
 pub fn router(state: ServerState) -> Router {
     Router::new()
         .route("/", get(admin_page))
+        .route("/assets/world-map.svg", get(world_map_svg))
         .route("/favicon.ico", get(favicon))
         .route("/v1/healthz", get(health))
         .route("/v1/dashboard", get(dashboard))
@@ -95,6 +96,13 @@ async fn dashboard_presence(
 
 async fn admin_page() -> Html<&'static str> {
     Html(include_str!("ui/dashboard.html"))
+}
+
+async fn world_map_svg() -> impl axum::response::IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+        include_str!("ui/world-map.svg"),
+    )
 }
 
 async fn sync_share(

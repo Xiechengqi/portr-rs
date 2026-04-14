@@ -141,14 +141,19 @@
       .map-shell::after {
         background: radial-gradient(circle at center, transparent 55%, rgba(255, 255, 255, 0.55) 100%);
       }
-      .world-svg,
+      .world-image,
       .map-overlay {
         position: absolute;
         inset: 0;
         width: 100%;
         height: 100%;
       }
-      .world-svg { opacity: 0.82; z-index: 0; }
+      .world-image {
+        object-fit: cover;
+        opacity: 0.72;
+        z-index: 0;
+        filter: saturate(0.4) hue-rotate(180deg) brightness(1.02);
+      }
       .map-overlay { z-index: 1; }
       .world-land {
         fill: rgba(0, 82, 255, 0.11);
@@ -657,14 +662,7 @@
                 <span>Server point uses configured coordinates. Clients use request country centroids.</span>
               </div>
               <div class="map-shell" id="map-shell">
-                <svg class="world-svg" viewBox="0 0 1000 520" preserveAspectRatio="none" aria-hidden="true">
-                  <rect class="world-outline" x="1" y="1" width="998" height="518" rx="28"></rect>
-                  <path class="world-land" d="M86 148c34-36 82-60 128-66 38-5 66 13 93 31 16 11 25 31 25 47 0 15-9 28-23 34-17 8-34 16-46 31-10 13-10 31-18 46-10 19-31 33-52 31-30-4-56-25-88-21-22 2-47 11-63-6-17-18-13-49-3-72 9-21 29-37 47-55z"></path>
-                  <path class="world-land" d="M269 293c18-17 48-21 70-11 18 9 31 27 33 47 3 27-16 51-28 74-9 18-10 40-22 57-13 19-38 31-61 24-19-5-29-27-31-46-4-30 13-59 16-89 2-20-1-42 23-56z"></path>
-                  <path class="world-land" d="M427 116c27-26 71-38 108-35 38 3 74 18 108 21 28 2 55-4 83 1 36 6 72 28 85 62 13 35-1 76-24 105-19 23-51 35-64 62-11 22-6 53-24 70-20 18-53 18-74 2-22-16-23-51-42-70-20-21-57-23-81-10-24 12-51 34-77 23-31-13-43-51-54-82-9-24-24-46-25-72-2-30 14-58 37-77 14-11 30-15 48-20z"></path>
-                  <path class="world-land" d="M487 294c22-14 55-11 74 7 21 20 22 54 17 82-6 31-18 66-48 80-23 10-53-4-64-27-12-25-5-54 1-80 4-21 2-50 20-62z"></path>
-                  <path class="world-land" d="M742 347c17-10 42-10 58 1 16 10 22 32 18 50-4 17-16 33-33 37-19 5-41-3-52-19-10-13-11-32-5-47 3-10 6-17 14-22z"></path>
-                </svg>
+                <img class="world-image" src="/assets/world-map.svg" alt="" />
                 <svg class="map-overlay" id="map-overlay" viewBox="0 0 1000 520" preserveAspectRatio="none"></svg>
                 <div id="map-points"></div>
                 <div class="map-empty" id="map-empty">Waiting for server geo or client locations</div>
