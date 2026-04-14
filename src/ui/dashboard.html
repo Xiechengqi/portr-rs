@@ -126,6 +126,33 @@
         border: 1px solid rgba(226, 232, 240, 0.9);
         overflow: hidden;
       }
+      .map-controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .map-zoom-label {
+        min-width: 48px;
+        text-align: center;
+        font: 11px/1 "JetBrains Mono", monospace;
+        color: var(--muted-foreground);
+      }
+      .map-control-btn {
+        appearance: none;
+        border: 1px solid rgba(226, 232, 240, 0.95);
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--foreground);
+        border-radius: 10px;
+        width: 30px;
+        height: 30px;
+        font: 16px/1 "JetBrains Mono", monospace;
+        cursor: pointer;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+      }
+      .map-control-btn:hover {
+        background: #ffffff;
+        border-color: rgba(0, 82, 255, 0.22);
+      }
       .map-shell::before,
       .map-shell::after {
         content: "";
@@ -140,6 +167,13 @@
       }
       .map-shell::after {
         background: radial-gradient(circle at center, transparent 55%, rgba(255, 255, 255, 0.55) 100%);
+      }
+      .map-canvas {
+        position: absolute;
+        inset: 0;
+        transform-origin: center center;
+        transition: transform 0.18s ease-out;
+        z-index: 0;
       }
       .world-image,
       .map-overlay {
@@ -659,12 +693,19 @@
             <div class="map-stage">
               <div class="map-stage-header">
                 <strong>Client & Server Topology</strong>
-                <span>Server point uses configured coordinates. Clients use request country centroids.</span>
+                <div class="map-controls">
+                  <button class="map-control-btn" id="map-zoom-out" type="button" aria-label="Zoom out">-</button>
+                  <span class="map-zoom-label" id="map-zoom-label">100%</span>
+                  <button class="map-control-btn" id="map-zoom-in" type="button" aria-label="Zoom in">+</button>
+                  <button class="map-control-btn" id="map-zoom-reset" type="button" aria-label="Reset zoom">0</button>
+                </div>
               </div>
               <div class="map-shell" id="map-shell">
-                <img class="world-image" src="/assets/world-map.svg" alt="" />
-                <svg class="map-overlay" id="map-overlay" viewBox="0 0 1000 520" preserveAspectRatio="none"></svg>
-                <div id="map-points"></div>
+                <div class="map-canvas" id="map-canvas">
+                  <img class="world-image" src="/assets/world-map.svg" alt="" />
+                  <svg class="map-overlay" id="map-overlay" viewBox="0 0 1000 520" preserveAspectRatio="none"></svg>
+                  <div id="map-points"></div>
+                </div>
                 <div class="map-empty" id="map-empty">Waiting for server geo or client locations</div>
               </div>
             </div>
@@ -749,6 +790,7 @@
       let _installations = [];
       let _shares = [];
       let _drawerOpen = false;
+      let _mapZoom = 1;
       const _pagePresenceSession = (window.crypto && crypto.randomUUID)
         ? crypto.randomUUID()
         : `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -922,6 +964,39 @@
 
         overlayEl.innerHTML = lines.join("");
         pointsEl.innerHTML = points.join("");
+        applyMapZoom();
+      }
+
+      function clampMapZoom(value) {
+        return Math.max(1, Math.min(3, value));
+      }
+
+      function applyMapZoom() {
+        const canvas = document.getElementById("map-canvas");
+        const label = document.getElementById("map-zoom-label");
+        if (!canvas || !label) return;
+        canvas.style.transform = `scale(${_mapZoom})`;
+        label.textContent = `${Math.round(_mapZoom * 100)}%`;
+      }
+
+      function setMapZoom(nextZoom) {
+        _mapZoom = clampMapZoom(nextZoom);
+        applyMapZoom();
+      }
+
+      function bindMapZoomControls() {
+        const shell = document.getElementById("map-shell");
+        const zoomIn = document.getElementById("map-zoom-in");
+        const zoomOut = document.getElementById("map-zoom-out");
+        const zoomReset = document.getElementById("map-zoom-reset");
+        zoomIn?.addEventListener("click", () => setMapZoom(_mapZoom + 0.2));
+        zoomOut?.addEventListener("click", () => setMapZoom(_mapZoom - 0.2));
+        zoomReset?.addEventListener("click", () => setMapZoom(1));
+        shell?.addEventListener("wheel", (event) => {
+          event.preventDefault();
+          const delta = event.deltaY < 0 ? 0.15 : -0.15;
+          setMapZoom(_mapZoom + delta);
+        }, { passive: false });
       }
 
       function healthDots(checks) {
@@ -1162,6 +1237,8 @@
       boot().catch(err => {
         document.body.innerHTML += `<pre style="padding:20px;color:#b91c1c">${String(err)}</pre>`;
       });
+      bindMapZoomControls();
+      applyMapZoom();
       updatePagePresence().catch(console.error);
       setInterval(() => boot().catch(console.error), 5000);
       setInterval(() => updatePagePresence().catch(console.error), 15000);
