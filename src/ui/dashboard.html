@@ -856,7 +856,6 @@
           return lat == null || lon == null ? null : { ...item, lat, lon };
         }).filter(Boolean);
         const server = map?.server?.lat != null && map?.server?.lon != null ? map.server : null;
-        document.getElementById("map-client-count").textContent = String(clients.length);
 
         if (!server && clients.length === 0) {
           pointsEl.innerHTML = "";
