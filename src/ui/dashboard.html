@@ -94,14 +94,12 @@
           linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
       }
       .map-layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1.7fr) minmax(260px, 0.8fr);
+        display: block;
       }
       .map-stage {
         position: relative;
         min-height: 360px;
         padding: 18px 20px 12px;
-        border-right: 1px solid rgba(226, 232, 240, 0.9);
       }
       .map-stage-header {
         margin-bottom: 10px;
@@ -220,15 +218,15 @@
         border-radius: 999px;
       }
       .map-dot--server {
-        width: 14px;
-        height: 14px;
+        width: 10px;
+        height: 10px;
         background: #0052ff;
-        box-shadow: 0 0 0 10px rgba(0, 82, 255, 0.08), 0 0 0 4px rgba(0, 82, 255, 0.18);
+        box-shadow: 0 0 0 5px rgba(0, 82, 255, 0.14);
       }
       .map-dot--server::after {
         content: "";
         position: absolute;
-        inset: -6px;
+        inset: -4px;
         border-radius: inherit;
         border: 1px solid rgba(0, 82, 255, 0.2);
         animation: pulse 2.8s infinite;
@@ -243,54 +241,22 @@
         background: #16a34a;
         box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.14);
       }
-      .map-label {
-        position: absolute;
-        transform: translate(10px, -50%);
-        font: 11px/1 "JetBrains Mono", monospace;
-        color: var(--foreground);
-        background: rgba(255, 255, 255, 0.9);
-        border: 1px solid rgba(226, 232, 240, 0.95);
-        border-radius: 999px;
-        padding: 4px 8px;
-        white-space: nowrap;
-        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
-      }
-      .map-side {
-        padding: 18px;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        gap: 14px;
-      }
-      .map-side-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-      }
-      .map-stat {
-        background: rgba(248, 250, 252, 0.92);
-        border: 1px solid rgba(226, 232, 240, 0.95);
-        border-radius: 16px;
-        padding: 12px 14px;
-      }
-      .map-stat small {
-        display: block;
-        font: 10px/1 "JetBrains Mono", monospace;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--muted-foreground);
-      }
-      .map-stat strong {
-        display: block;
-        margin-top: 6px;
-        font-size: 1rem;
-      }
       .map-legend {
+        position: absolute;
+        right: 16px;
+        bottom: 16px;
+        z-index: 4;
         display: flex;
         flex-wrap: wrap;
         gap: 12px;
         font-size: 12px;
         color: var(--muted-foreground);
+        padding: 8px 10px;
+        border: 1px solid rgba(226, 232, 240, 0.95);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+        backdrop-filter: blur(8px);
       }
       .map-legend span {
         display: inline-flex;
@@ -668,8 +634,6 @@
       /* ── Responsive ── */
       @media (max-width: 980px) {
         .topbar { flex-direction: column; align-items: flex-start; }
-        .map-layout { grid-template-columns: 1fr; }
-        .map-stage { border-right: none; border-bottom: 1px solid rgba(226, 232, 240, 0.9); }
         .drawer-summary { grid-template-columns: 1fr 1fr; }
       }
     </style>
@@ -709,22 +673,14 @@
                   <button class="map-control-btn" id="map-zoom-in" type="button" aria-label="Zoom in">+</button>
                   <button class="map-control-btn" id="map-zoom-reset" type="button" aria-label="Reset map view">↺</button>
                 </div>
+                <div class="map-legend">
+                  <span><i class="server"></i>server</span>
+                  <span><i class="active"></i>active client</span>
+                  <span><i class="inactive"></i>idle client</span>
+                </div>
                 <div class="map-empty" id="map-empty">Waiting for server geo or client locations</div>
               </div>
             </div>
-            <aside class="map-side">
-              <div class="map-side-grid">
-                <div class="map-stat"><small>Clients</small><strong id="map-stat-clients">0</strong></div>
-                <div class="map-stat"><small>Online</small><strong id="map-stat-online">0</strong></div>
-                <div class="map-stat"><small>Countries</small><strong id="map-stat-countries">0</strong></div>
-                <div class="map-stat"><small>Server</small><strong id="map-stat-server">--</strong></div>
-              </div>
-              <div class="map-legend">
-                <span><i class="server"></i>server</span>
-                <span><i class="active"></i>active client</span>
-                <span><i class="inactive"></i>idle client</span>
-              </div>
-            </aside>
           </div>
         </div>
       </section>
@@ -925,14 +881,7 @@
           return lat == null || lon == null ? null : { ...item, lat, lon };
         }).filter(Boolean);
         const server = map?.server?.lat != null && map?.server?.lon != null ? map.server : null;
-        const countries = new Set(clients.map((item) => item.countryCode).filter(Boolean));
-        const onlineClients = clients.filter((item) => item.isActive);
-
         document.getElementById("map-client-count").textContent = String(clients.length);
-        document.getElementById("map-stat-clients").textContent = String(clients.length);
-        document.getElementById("map-stat-online").textContent = String(onlineClients.length);
-        document.getElementById("map-stat-countries").textContent = String(countries.size);
-        document.getElementById("map-stat-server").textContent = server?.label || "--";
 
         if (!server && clients.length === 0) {
           pointsEl.innerHTML = "";
@@ -947,8 +896,7 @@
         const serverPoint = server ? projectPoint(server.lat, server.lon, width, height) : null;
         if (server && serverPoint) {
           points.push(
-            `<div class="map-dot map-dot--server" style="left:${serverPoint.xPct}%;top:${serverPoint.yPct}%" title="${escapeHtml(server.label)}"></div>`,
-            `<div class="map-label" style="left:${serverPoint.xPct}%;top:${serverPoint.yPct}%">${escapeHtml(server.label)}</div>`
+            `<div class="map-dot map-dot--server" style="left:${serverPoint.xPct}%;top:${serverPoint.yPct}%" title="${escapeHtml(server.label)}"></div>`
           );
         }
 
