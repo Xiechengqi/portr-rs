@@ -561,10 +561,10 @@ impl AppStore {
             params![input.share_id, now],
         )
         .map_err(|e| AppError::Internal(format!("insert heartbeat failed: {e}")))?;
-        // Prune entries older than 15 minutes.
+        // Prune entries older than 24 hours.
         conn.execute(
             "DELETE FROM share_health_checks WHERE checked_at < ?1",
-            params![now - 900],
+            params![now - 86_400],
         )
         .map_err(|e| AppError::Internal(format!("prune heartbeats failed: {e}")))?;
         Ok(())
