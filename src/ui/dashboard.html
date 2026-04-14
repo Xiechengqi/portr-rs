@@ -464,7 +464,7 @@
             <thead>
               <tr>
                 <th>Share</th>
-                <th>Token</th>
+                <th>APIKEY</th>
                 <th>Usage</th>
                 <th>Status</th>
                 <th>Health</th>
@@ -516,7 +516,8 @@
 
       function maskToken(value) {
         if (!value) return "--";
-        if (value.length <= 8) return value;
+        if (value.length === 1) return "*";
+        if (value.length === 2) return value.slice(0, 1) + "*";
         return value.slice(0, 1) + "***" + value.slice(-1);
       }
 
