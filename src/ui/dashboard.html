@@ -20,10 +20,7 @@
       body {
         margin: 0;
         font-family: Inter, system-ui, sans-serif;
-        background:
-          radial-gradient(circle at top right, rgba(77, 124, 255, 0.14), transparent 26rem),
-          radial-gradient(circle at bottom left, rgba(0, 82, 255, 0.08), transparent 22rem),
-          var(--background);
+        background: #ffffff;
         color: var(--foreground);
       }
       .page { max-width: 1200px; margin: 0 auto; padding: 28px 20px 80px; }
@@ -125,11 +122,13 @@
       tbody tr {
         cursor: pointer;
         transition: background 0.15s;
-        position: relative;
       }
       tbody tr:last-child td { border-bottom: none; }
       tbody tr:hover { background: rgba(0, 82, 255, 0.025); }
-      tbody tr::before {
+      tbody td:first-child {
+        position: relative;
+      }
+      tbody td:first-child::before {
         content: "";
         position: absolute;
         left: 0;
@@ -141,7 +140,7 @@
         opacity: 0;
         transition: opacity 0.15s;
       }
-      tbody tr:hover::before { opacity: 1; }
+      tbody tr:hover td:first-child::before { opacity: 1; }
       td.meta {
         font-size: 13px;
         color: var(--muted-foreground);
@@ -546,6 +545,10 @@
 
       function healthDots(checks) {
         const total = 10;
+        if (!checks || checks.length === 0) {
+          // No heartbeat data yet — show all gray (unknown state).
+          return `<span class="health-dots">${'<span class="health-dot"></span>'.repeat(total)}</span>`;
+        }
         const now = Math.floor(Date.now() / 1000);
         const dots = [];
         // Build a set of minute-buckets that had at least one heartbeat.
