@@ -86,6 +86,189 @@
         font-size: 12px;
         color: var(--muted-foreground);
       }
+      .map-card {
+        position: relative;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at top left, rgba(0, 82, 255, 0.16), transparent 28%),
+          linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+      }
+      .map-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(260px, 0.8fr);
+      }
+      .map-stage {
+        position: relative;
+        min-height: 360px;
+        padding: 18px 20px 12px;
+        border-right: 1px solid rgba(226, 232, 240, 0.9);
+      }
+      .map-stage-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .map-stage-header strong { font-size: 0.96rem; }
+      .map-stage-header span {
+        font-size: 12px;
+        color: var(--muted-foreground);
+      }
+      .map-shell {
+        position: relative;
+        min-height: 300px;
+        border-radius: 18px;
+        background:
+          linear-gradient(180deg, rgba(0, 82, 255, 0.035), rgba(0, 82, 255, 0.02)),
+          radial-gradient(circle at 20% 20%, rgba(77, 124, 255, 0.12), transparent 28%),
+          #f8fbff;
+        border: 1px solid rgba(226, 232, 240, 0.9);
+        overflow: hidden;
+      }
+      .map-shell::before,
+      .map-shell::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .map-shell::before {
+        background:
+          linear-gradient(transparent 24.5%, rgba(15, 23, 42, 0.03) 25%, transparent 25.5%, transparent 49.5%, rgba(15, 23, 42, 0.03) 50%, transparent 50.5%, transparent 74.5%, rgba(15, 23, 42, 0.03) 75%, transparent 75.5%),
+          linear-gradient(90deg, transparent 24.5%, rgba(15, 23, 42, 0.03) 25%, transparent 25.5%, transparent 49.5%, rgba(15, 23, 42, 0.03) 50%, transparent 50.5%, transparent 74.5%, rgba(15, 23, 42, 0.03) 75%, transparent 75.5%);
+      }
+      .map-shell::after {
+        background: radial-gradient(circle at center, transparent 55%, rgba(255, 255, 255, 0.55) 100%);
+      }
+      .world-svg,
+      .map-overlay {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .world-svg { opacity: 0.82; }
+      .world-land {
+        fill: rgba(0, 82, 255, 0.11);
+        stroke: rgba(0, 82, 255, 0.14);
+        stroke-width: 1;
+      }
+      .world-outline {
+        fill: none;
+        stroke: rgba(15, 23, 42, 0.06);
+        stroke-width: 1;
+      }
+      .map-overlay line {
+        stroke: rgba(0, 82, 255, 0.18);
+        stroke-width: 1.4;
+        stroke-dasharray: 4 4;
+      }
+      #map-points {
+        position: absolute;
+        inset: 0;
+      }
+      .map-dot {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        border-radius: 999px;
+      }
+      .map-dot--server {
+        width: 14px;
+        height: 14px;
+        background: #0052ff;
+        box-shadow: 0 0 0 10px rgba(0, 82, 255, 0.08), 0 0 0 4px rgba(0, 82, 255, 0.18);
+      }
+      .map-dot--server::after {
+        content: "";
+        position: absolute;
+        inset: -6px;
+        border-radius: inherit;
+        border: 1px solid rgba(0, 82, 255, 0.2);
+        animation: pulse 2.8s infinite;
+      }
+      .map-dot--client {
+        width: 10px;
+        height: 10px;
+        background: #94a3b8;
+        box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.06);
+      }
+      .map-dot--client.active {
+        background: #16a34a;
+        box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.14);
+      }
+      .map-label {
+        position: absolute;
+        transform: translate(10px, -50%);
+        font: 11px/1 "JetBrains Mono", monospace;
+        color: var(--foreground);
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(226, 232, 240, 0.95);
+        border-radius: 999px;
+        padding: 4px 8px;
+        white-space: nowrap;
+        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
+      }
+      .map-side {
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 14px;
+      }
+      .map-side-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .map-stat {
+        background: rgba(248, 250, 252, 0.92);
+        border: 1px solid rgba(226, 232, 240, 0.95);
+        border-radius: 16px;
+        padding: 12px 14px;
+      }
+      .map-stat small {
+        display: block;
+        font: 10px/1 "JetBrains Mono", monospace;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted-foreground);
+      }
+      .map-stat strong {
+        display: block;
+        margin-top: 6px;
+        font-size: 1rem;
+      }
+      .map-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        font-size: 12px;
+        color: var(--muted-foreground);
+      }
+      .map-legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .map-legend i {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        display: inline-block;
+      }
+      .map-legend .server { background: #0052ff; }
+      .map-legend .active { background: #16a34a; }
+      .map-legend .inactive { background: #94a3b8; }
+      .map-empty {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted-foreground);
+        font-size: 13px;
+      }
       .page-footer {
         margin-top: auto;
         display: flex;
@@ -438,6 +621,8 @@
       /* ── Responsive ── */
       @media (max-width: 980px) {
         .topbar { flex-direction: column; align-items: flex-start; }
+        .map-layout { grid-template-columns: 1fr; }
+        .map-stage { border-right: none; border-bottom: 1px solid rgba(226, 232, 240, 0.9); }
         .drawer-summary { grid-template-columns: 1fr 1fr; }
       }
     </style>
@@ -458,6 +643,46 @@
           <span class="topbar-sync">synced <span id="last-sync">--</span></span>
         </div>
       </div>
+
+      <section class="section">
+        <div class="section-label">GLOBAL MAP <span id="map-client-count">0</span></div>
+        <div class="table-card map-card">
+          <div class="map-layout">
+            <div class="map-stage">
+              <div class="map-stage-header">
+                <strong>Client & Server Topology</strong>
+                <span>Server point uses configured coordinates. Clients use request country centroids.</span>
+              </div>
+              <div class="map-shell" id="map-shell">
+                <svg class="world-svg" viewBox="0 0 1000 520" preserveAspectRatio="none" aria-hidden="true">
+                  <rect class="world-outline" x="1" y="1" width="998" height="518" rx="28"></rect>
+                  <path class="world-land" d="M86 148c34-36 82-60 128-66 38-5 66 13 93 31 16 11 25 31 25 47 0 15-9 28-23 34-17 8-34 16-46 31-10 13-10 31-18 46-10 19-31 33-52 31-30-4-56-25-88-21-22 2-47 11-63-6-17-18-13-49-3-72 9-21 29-37 47-55z"></path>
+                  <path class="world-land" d="M269 293c18-17 48-21 70-11 18 9 31 27 33 47 3 27-16 51-28 74-9 18-10 40-22 57-13 19-38 31-61 24-19-5-29-27-31-46-4-30 13-59 16-89 2-20-1-42 23-56z"></path>
+                  <path class="world-land" d="M427 116c27-26 71-38 108-35 38 3 74 18 108 21 28 2 55-4 83 1 36 6 72 28 85 62 13 35-1 76-24 105-19 23-51 35-64 62-11 22-6 53-24 70-20 18-53 18-74 2-22-16-23-51-42-70-20-21-57-23-81-10-24 12-51 34-77 23-31-13-43-51-54-82-9-24-24-46-25-72-2-30 14-58 37-77 14-11 30-15 48-20z"></path>
+                  <path class="world-land" d="M487 294c22-14 55-11 74 7 21 20 22 54 17 82-6 31-18 66-48 80-23 10-53-4-64-27-12-25-5-54 1-80 4-21 2-50 20-62z"></path>
+                  <path class="world-land" d="M742 347c17-10 42-10 58 1 16 10 22 32 18 50-4 17-16 33-33 37-19 5-41-3-52-19-10-13-11-32-5-47 3-10 6-17 14-22z"></path>
+                </svg>
+                <svg class="map-overlay" id="map-overlay" viewBox="0 0 1000 520" preserveAspectRatio="none"></svg>
+                <div id="map-points"></div>
+                <div class="map-empty" id="map-empty">Waiting for server geo or client locations</div>
+              </div>
+            </div>
+            <aside class="map-side">
+              <div class="map-side-grid">
+                <div class="map-stat"><small>Clients</small><strong id="map-stat-clients">0</strong></div>
+                <div class="map-stat"><small>Online</small><strong id="map-stat-online">0</strong></div>
+                <div class="map-stat"><small>Countries</small><strong id="map-stat-countries">0</strong></div>
+                <div class="map-stat"><small>Server</small><strong id="map-stat-server">--</strong></div>
+              </div>
+              <div class="map-legend">
+                <span><i class="server"></i>server</span>
+                <span><i class="active"></i>active client</span>
+                <span><i class="inactive"></i>idle client</span>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
 
       <!-- Clients -->
       <section class="section">
@@ -607,6 +832,95 @@
         return `${value.toFixed(1)}%`;
       }
 
+      const COUNTRY_CENTROIDS = {
+        AR: [-38.42, -63.62], AT: [47.52, 14.55], AU: [-25.27, 133.77], BE: [50.50, 4.47],
+        BR: [-14.23, -51.92], CA: [56.13, -106.35], CH: [46.82, 8.23], CL: [-35.68, -71.54],
+        CN: [35.86, 104.20], CO: [4.57, -74.30], DE: [51.17, 10.45], DK: [56.26, 9.50],
+        EG: [26.82, 30.80], ES: [40.46, -3.75], FI: [61.92, 25.75], FR: [46.22, 2.21],
+        GB: [55.38, -3.43], GR: [39.07, 21.82], HK: [22.32, 114.17], ID: [-0.79, 113.92],
+        IE: [53.41, -8.24], IL: [31.05, 34.85], IN: [20.59, 78.96], IT: [41.87, 12.57],
+        JP: [36.20, 138.25], KR: [35.91, 127.77], MX: [23.63, -102.55], MY: [4.21, 101.98],
+        NG: [9.08, 8.67], NL: [52.13, 5.29], NO: [60.47, 8.47], NZ: [-40.90, 174.89],
+        PE: [-9.19, -75.02], PH: [12.88, 121.77], PL: [51.92, 19.15], PT: [39.40, -8.22],
+        RU: [61.52, 105.31], SA: [23.89, 45.08], SE: [60.13, 18.64], SG: [1.35, 103.82],
+        TH: [15.87, 100.99], TR: [38.96, 35.24], TW: [23.70, 120.96], UA: [48.38, 31.17],
+        US: [39.83, -98.58], VN: [14.06, 108.28], ZA: [-30.56, 22.94]
+      };
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function projectPoint(lat, lon, width, height) {
+        return {
+          x: ((lon + 180) / 360) * width,
+          y: ((90 - lat) / 180) * height,
+        };
+      }
+
+      function renderMap(map) {
+        const pointsEl = document.getElementById("map-points");
+        const overlayEl = document.getElementById("map-overlay");
+        const emptyEl = document.getElementById("map-empty");
+        const width = 1000;
+        const height = 520;
+        const clients = (map?.clients || []).map((item) => {
+          const lat = item.lat ?? COUNTRY_CENTROIDS[item.countryCode]?.[0];
+          const lon = item.lon ?? COUNTRY_CENTROIDS[item.countryCode]?.[1];
+          return lat == null || lon == null ? null : { ...item, lat, lon };
+        }).filter(Boolean);
+        const server = map?.server?.lat != null && map?.server?.lon != null ? map.server : null;
+        const countries = new Set(clients.map((item) => item.countryCode).filter(Boolean));
+        const onlineClients = clients.filter((item) => item.isActive);
+
+        document.getElementById("map-client-count").textContent = String(clients.length);
+        document.getElementById("map-stat-clients").textContent = String(clients.length);
+        document.getElementById("map-stat-online").textContent = String(onlineClients.length);
+        document.getElementById("map-stat-countries").textContent = String(countries.size);
+        document.getElementById("map-stat-server").textContent = server?.label || "--";
+
+        if (!server && clients.length === 0) {
+          pointsEl.innerHTML = "";
+          overlayEl.innerHTML = "";
+          emptyEl.style.display = "flex";
+          return;
+        }
+
+        emptyEl.style.display = "none";
+        const points = [];
+        const lines = [];
+        const serverPoint = server ? projectPoint(server.lat, server.lon, width, height) : null;
+        if (server && serverPoint) {
+          points.push(
+            `<div class="map-dot map-dot--server" style="left:${serverPoint.x}px;top:${serverPoint.y}px" title="${escapeHtml(server.label)}"></div>`,
+            `<div class="map-label" style="left:${serverPoint.x}px;top:${serverPoint.y}px">${escapeHtml(server.label)}</div>`
+          );
+        }
+
+        for (const client of clients) {
+          const point = projectPoint(client.lat, client.lon, width, height);
+          if (serverPoint) {
+            lines.push(`<line x1="${serverPoint.x}" y1="${serverPoint.y}" x2="${point.x}" y2="${point.y}"></line>`);
+          }
+          const title = [
+            client.label,
+            client.platform || "",
+            client.countryCode || "",
+            client.lastSeenAt ? fullTime(client.lastSeenAt) : "",
+          ].filter(Boolean).join(" · ");
+          points.push(
+            `<div class="map-dot map-dot--client ${client.isActive ? "active" : ""}" style="left:${point.x}px;top:${point.y}px" title="${escapeHtml(title)}"></div>`
+          );
+        }
+
+        overlayEl.innerHTML = lines.join("");
+        pointsEl.innerHTML = points.join("");
+      }
+
       function healthDots(checks) {
         const total = 10;
         if (!checks || checks.length === 0) {
@@ -718,8 +1032,7 @@
         const pct = usagePercent(share.tokensUsed, share.tokenLimit);
 
         document.getElementById("drawer-title").textContent = share.shareName;
-        document.getElementById("drawer-meta").innerHTML =
-          `<span>${share.appType}</span><span>${share.providerId || "no provider"}</span><span class="token-value">${maskToken(share.shareToken)}</span>`;
+        document.getElementById("drawer-meta").innerHTML = "";
 
         document.getElementById("drawer-summary").innerHTML = `
           <div class="drawer-summary-item">
@@ -784,6 +1097,7 @@
         document.getElementById("stat-active-shares").textContent = data.stats.activeShares;
         document.getElementById("last-sync").textContent = relTime(data.generatedAt);
         document.getElementById("last-sync").title = fullTime(data.generatedAt);
+        renderMap(data.map || null);
 
         /* section counts */
         document.getElementById("client-count").textContent = _installations.length;

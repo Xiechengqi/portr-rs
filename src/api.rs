@@ -1,14 +1,14 @@
-use axum::extract::State;
-use axum::http::StatusCode;
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{any, get, post};
-use axum::{
-    Json, Router,
-    response::{Html, Redirect},
-};
+use axum::{Json, Router, response::Html};
 
 use crate::ServerState;
 use crate::error::AppError;
 use crate::models::{
+    ClientMetadata,
     DashboardPresenceRequest, DashboardPresenceResponse, DashboardResponse, HealthResponse, IssueLeaseRequest, IssueLeaseResponse,
     RegisterInstallationRequest, RegisterInstallationResponse, ShareBatchSyncRequest,
     ShareClaimSubdomainRequest, ShareDeleteRequest, ShareHeartbeatRequest,
@@ -18,7 +18,7 @@ use crate::proxy::proxy_handler;
 
 pub fn router(state: ServerState) -> Router {
     Router::new()
-        .route("/", get(root))
+        .route("/", get(admin_page))
         .route("/favicon.ico", get(favicon))
         .route("/v1/healthz", get(health))
         .route("/v1/dashboard", get(dashboard))
@@ -31,14 +31,8 @@ pub fn router(state: ServerState) -> Router {
         .route("/v1/share-request-logs/batch-sync", post(batch_sync_share_request_logs))
         .route("/v1/shares/heartbeat", post(share_heartbeat))
         .route("/v1/shares/delete", post(delete_share))
-        .route("/admin", get(admin_page))
-        .route("/admin/login", get(root))
         .route("/*path", any(proxy_handler))
         .with_state(state)
-}
-
-async fn root() -> Redirect {
-    Redirect::to("/admin")
 }
 
 async fn favicon() -> StatusCode {
@@ -51,19 +45,31 @@ async fn health() -> Json<HealthResponse> {
 
 async fn register_installation(
     State(state): State<ServerState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<RegisterInstallationRequest>,
 ) -> Result<Json<RegisterInstallationResponse>, AppError> {
-    let response = state.store.register_installation(input).await?;
+    let response = state
+        .store
+        .register_installation(input, extract_client_metadata(&headers, addr))
+        .await?;
     Ok(Json(response))
 }
 
 async fn issue_lease(
     State(state): State<ServerState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<IssueLeaseRequest>,
 ) -> Result<Json<IssueLeaseResponse>, AppError> {
     let response = state
         .store
-        .issue_lease(&state.config, &state.proxy, input)
+        .issue_lease(
+            &state.config,
+            &state.proxy,
+            input,
+            extract_client_metadata(&headers, addr),
+        )
         .await?;
     Ok(Json(response))
 }
@@ -71,7 +77,12 @@ async fn issue_lease(
 async fn dashboard(
     State(state): State<ServerState>,
 ) -> Result<Json<DashboardResponse>, AppError> {
-    Ok(Json(state.store.dashboard_snapshot(&state.proxy).await?))
+    Ok(Json(
+        state
+            .store
+            .dashboard_snapshot(&state.config, &state.proxy)
+            .await?,
+    ))
 }
 
 async fn dashboard_presence(
@@ -88,25 +99,40 @@ async fn admin_page() -> Html<&'static str> {
 
 async fn sync_share(
     State(state): State<ServerState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<ShareSyncRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state.store.sync_share(input).await?;
+    state
+        .store
+        .sync_share(input, extract_client_metadata(&headers, addr))
+        .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn claim_share_subdomain(
     State(state): State<ServerState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<ShareClaimSubdomainRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state.store.claim_share_subdomain(input).await?;
+    state
+        .store
+        .claim_share_subdomain(input, extract_client_metadata(&headers, addr))
+        .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn share_heartbeat(
     State(state): State<ServerState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<ShareHeartbeatRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state.store.record_share_heartbeat(input).await?;
+    state
+        .store
+        .record_share_heartbeat(input, extract_client_metadata(&headers, addr))
+        .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -120,16 +146,57 @@ async fn delete_share(
 
 async fn batch_sync_share(
     State(state): State<ServerState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<ShareBatchSyncRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state.store.batch_sync_shares(input).await?;
+    state
+        .store
+        .batch_sync_shares(input, extract_client_metadata(&headers, addr))
+        .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn batch_sync_share_request_logs(
     State(state): State<ServerState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<ShareRequestLogBatchSyncRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    state.store.batch_sync_share_request_logs(input).await?;
+    state
+        .store
+        .batch_sync_share_request_logs(input, extract_client_metadata(&headers, addr))
+        .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+fn extract_client_metadata(headers: &HeaderMap, addr: SocketAddr) -> ClientMetadata {
+    let forwarded_ip = headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split(',').next())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| Some(addr.ip().to_string()));
+
+    let country_code = headers
+        .get("cf-ipcountry")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| v.len() == 2 && *v != "XX" && *v != "T1")
+        .map(|v| v.to_ascii_uppercase());
+
+    ClientMetadata {
+        ip: forwarded_ip,
+        country_code,
+    }
 }

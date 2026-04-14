@@ -8,8 +8,21 @@ pub struct Installation {
     pub public_key: String,
     pub platform: String,
     pub app_version: String,
+    pub last_seen_ip: Option<String>,
+    pub country_code: Option<String>,
+    pub country: Option<String>,
+    pub region: Option<String>,
+    pub city: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
     pub created_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientMetadata {
+    pub ip: Option<String>,
+    pub country_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +193,7 @@ pub struct ShareDescriptor {
 pub struct DashboardResponse {
     pub generated_at: DateTime<Utc>,
     pub stats: DashboardStats,
+    pub map: DashboardMap,
     pub installations: Vec<InstallationView>,
     pub shares: Vec<ShareView>,
 }
@@ -195,10 +209,45 @@ pub struct DashboardStats {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DashboardMap {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<DashboardMapPoint>,
+    pub clients: Vec<DashboardMapPoint>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardMapPoint {
+    pub id: String,
+    pub label: String,
+    pub point_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub city: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lat: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lon: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_at: Option<DateTime<Utc>>,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstallationView {
     pub id: String,
     pub platform: String,
     pub app_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country_code: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
     pub active_lease_count: usize,

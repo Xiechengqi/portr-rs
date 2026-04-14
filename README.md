@@ -33,7 +33,7 @@
 - `POST /v1/shares/sync`
 - `POST /v1/shares/batch-sync`
 - `POST /v1/shares/delete`
-- `GET /admin`
+- `GET /`
 
 ## 二进制部署
 
@@ -101,9 +101,9 @@ curl http://127.0.0.1/v1/healthz
 # {"ok":true}
 ```
 
-控制台：`http://127.0.0.1/admin`
+控制台：`http://127.0.0.1/`
 
-`/admin` 和 `/v1/dashboard` 默认公开可读，不需要登录。
+`/` 和 `/v1/dashboard` 默认公开可读，不需要登录。
 
 ### systemd 部署示例
 

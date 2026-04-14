@@ -43,12 +43,16 @@ async fn main() -> Result<()> {
         .with_env_filter(env_filter)
         .init();
 
-    let config = Config::from_env();
+    let mut config = Config::from_env();
+    maybe_resolve_server_geo(&mut config).await;
     info!(
         api_addr = %config.api_addr,
         ssh_addr = %config.ssh_addr,
         tunnel_domain = %config.tunnel_domain,
         ssh_public_addr = %config.effective_ssh_public_addr(),
+        server_label = %config.server_label,
+        server_lat = config.server_lat,
+        server_lon = config.server_lon,
         db_path = %config.db_path.display(),
         env_path = %env_path.display(),
         use_localhost = config.use_localhost,
@@ -92,7 +96,11 @@ async fn main() -> Result<()> {
     });
     let ssh_task = tokio::spawn(async move { ssh_server.run_with_listener(ssh_listener).await });
     let http_task = tokio::spawn(async move {
-        axum::serve(http_listener, api::router(state)).await?;
+        axum::serve(
+            http_listener,
+            api::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await?;
         Ok::<_, anyhow::Error>(())
     });
 
@@ -106,6 +114,41 @@ async fn main() -> Result<()> {
             cleanup_task.abort();
             http_result??;
             Ok(())
+        }
+    }
+}
+
+async fn maybe_resolve_server_geo(config: &mut Config) {
+    if config.server_lat.is_some() && config.server_lon.is_some() {
+        return;
+    }
+    let client = match reqwest::Client::builder()
+        .user_agent("portr-rs/0.1")
+        .timeout(Duration::from_secs(3))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return,
+    };
+    let response = match client.get("https://ip.im/info").send().await {
+        Ok(response) if response.status().is_success() => response,
+        _ => return,
+    };
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(_) => return,
+    };
+    for raw_line in body.lines() {
+        let line = raw_line.trim();
+        if let Some(value) = line.strip_prefix("Loc:") {
+            if let Some((lat, lon)) = value.trim().split_once(',') {
+                if config.server_lat.is_none() {
+                    config.server_lat = lat.trim().parse().ok();
+                }
+                if config.server_lon.is_none() {
+                    config.server_lon = lon.trim().parse().ok();
+                }
+            }
         }
     }
 }
@@ -141,6 +184,9 @@ Environment:
   PORTR_RS_SSH_ADDR              SSH listen address, default 0.0.0.0:2222
   PORTR_RS_TUNNEL_DOMAIN         Public tunnel domain, default 0.0.0.0:8787
   PORTR_RS_SSH_PUBLIC_ADDR       SSH address sent to clients, default TUNNEL_DOMAIN:SSH_PORT
+  PORTR_RS_SERVER_LABEL          Server label shown on dashboard map, default portr-rs
+  PORTR_RS_SERVER_LAT            Server latitude for dashboard map
+  PORTR_RS_SERVER_LON            Server longitude for dashboard map
   PORTR_RS_USE_LOCALHOST         Use http for localhost-style domains, default true
   PORTR_RS_LEASE_TTL_SECS        Tunnel lease ttl, default 60
   PORTR_RS_DB_PATH               SQLite path, default $HOME/.config/portr-rs/portr-rs.db

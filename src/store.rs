@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
@@ -7,12 +8,13 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use rand::distributions::{Alphanumeric, DistString};
 use rusqlite::{Connection, OptionalExtension, params};
 use tokio::sync::Mutex;
+use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::config::Config;
 use crate::error::AppError;
 use crate::models::{
-    DashboardPresenceRequest, DashboardResponse, DashboardStats, HealthCheckEntry, Installation, InstallationView,
+    ClientMetadata, DashboardMap, DashboardMapPoint, DashboardPresenceRequest, DashboardResponse, DashboardStats, HealthCheckEntry, Installation, InstallationView,
     IssueLeaseRequest, IssueLeaseResponse, LeaseView, RegisterInstallationRequest,
     RegisterInstallationResponse, ShareBatchSyncRequest, ShareClaimSubdomainRequest,
     ShareDeleteRequest, ShareDescriptor, ShareHeartbeatRequest, ShareRequestLogBatchSyncRequest,
@@ -23,6 +25,23 @@ use crate::proxy::ProxyRegistry;
 #[derive(Clone)]
 pub struct AppStore {
     conn: Arc<Mutex<Connection>>,
+}
+
+#[derive(Debug, Clone)]
+struct GeoLookupResult {
+    country_code: Option<String>,
+    country: Option<String>,
+    region: Option<String>,
+    city: Option<String>,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct InstallationGeoState {
+    last_seen_ip: Option<String>,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
 }
 
 impl AppStore {
@@ -42,33 +61,54 @@ impl AppStore {
     pub async fn register_installation(
         &self,
         input: RegisterInstallationRequest,
+        metadata: ClientMetadata,
     ) -> Result<RegisterInstallationResponse, AppError> {
         if input.public_key.trim().is_empty() {
             return Err(AppError::BadRequest("public_key is required".into()));
         }
         let now = Utc::now();
+        let ip = metadata.ip.clone();
         let installation = Installation {
             id: Uuid::new_v4().to_string(),
             public_key: input.public_key,
             platform: input.platform,
             app_version: input.app_version,
+            last_seen_ip: ip.clone(),
+            country_code: metadata.country_code,
+            country: None,
+            region: None,
+            city: None,
+            latitude: None,
+            longitude: None,
             created_at: now,
             last_seen_at: now,
         };
         let conn = self.conn.lock().await;
         conn.execute(
-            "INSERT INTO installations (id, public_key, platform, app_version, created_at, last_seen_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO installations (
+                id, public_key, platform, app_version, last_seen_ip, country_code, country, region,
+                city, latitude, longitude, created_at, last_seen_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 installation.id,
                 installation.public_key,
                 installation.platform,
                 installation.app_version,
+                installation.last_seen_ip,
+                installation.country_code,
+                installation.country,
+                installation.region,
+                installation.city,
+                installation.latitude,
+                installation.longitude,
                 installation.created_at.to_rfc3339(),
                 installation.last_seen_at.to_rfc3339(),
             ],
         )
         .map_err(|e| AppError::Internal(format!("insert installation failed: {e}")))?;
+        drop(conn);
+        self.refresh_installation_geo(&installation.id, &ip, true)
+            .await?;
         Ok(RegisterInstallationResponse {
             installation_id: installation.id,
         })
@@ -113,6 +153,7 @@ impl AppStore {
         config: &Config,
         proxy: &ProxyRegistry,
         input: IssueLeaseRequest,
+        metadata: ClientMetadata,
     ) -> Result<IssueLeaseResponse, AppError> {
         let now = Utc::now();
         let skew = (now.timestamp_millis() - input.timestamp_ms).abs();
@@ -124,13 +165,16 @@ impl AppStore {
             let conn = self.conn.lock().await;
             let installation = get_installation(&conn, &input.installation_id)?
                 .ok_or_else(|| AppError::Unauthorized("installation not found".into()))?;
-            conn.execute(
-                "UPDATE installations SET last_seen_at = ?2 WHERE id = ?1",
-                params![input.installation_id, now.to_rfc3339()],
-            )
-            .map_err(|e| AppError::Internal(format!("update installation failed: {e}")))?;
-            installation
+            let should_refresh_geo =
+                should_refresh_installation_geo(&installation, metadata.ip.as_deref());
+            touch_installation_presence(&conn, &input.installation_id, &metadata, now)?;
+            (installation, should_refresh_geo)
         };
+        if installation.1 {
+            self.refresh_installation_geo(&input.installation_id, &metadata.ip, false)
+                .await?;
+        }
+        let installation = installation.0;
 
         let tunnel_type = input.tunnel_type.to_ascii_lowercase();
         if tunnel_type != "http" {
@@ -271,12 +315,24 @@ impl AppStore {
         Ok(lease)
     }
 
-    pub async fn sync_share(&self, input: ShareSyncRequest) -> Result<(), AppError> {
+    pub async fn sync_share(
+        &self,
+        input: ShareSyncRequest,
+        metadata: ClientMetadata,
+    ) -> Result<(), AppError> {
         {
             let conn = self.conn.lock().await;
-            let exists = get_installation(&conn, &input.installation_id)?.is_some();
-            if !exists {
+            let installation = get_installation(&conn, &input.installation_id)?;
+            let Some(installation) = installation else {
                 return Err(AppError::Unauthorized("installation not found".into()));
+            };
+            let should_refresh_geo =
+                should_refresh_installation_geo(&installation, metadata.ip.as_deref());
+            touch_installation_presence(&conn, &input.installation_id, &metadata, Utc::now())?;
+            drop(conn);
+            if should_refresh_geo {
+                self.refresh_installation_geo(&input.installation_id, &metadata.ip, false)
+                    .await?;
             }
         }
         self.upsert_share(&input.installation_id, input.share).await
@@ -285,15 +341,25 @@ impl AppStore {
     pub async fn claim_share_subdomain(
         &self,
         input: ShareClaimSubdomainRequest,
+        metadata: ClientMetadata,
     ) -> Result<(), AppError> {
         let subdomain = normalize_subdomain(&input.share.subdomain)?;
         ensure_subdomain_allowed(&subdomain)?;
         let conn = self.conn.lock().await;
-        let exists = get_installation(&conn, &input.installation_id)?.is_some();
-        if !exists {
+        let installation = get_installation(&conn, &input.installation_id)?;
+        let Some(installation) = installation else {
             return Err(AppError::Unauthorized("installation not found".into()));
+        };
+        let should_refresh_geo =
+            should_refresh_installation_geo(&installation, metadata.ip.as_deref());
+        touch_installation_presence(&conn, &input.installation_id, &metadata, Utc::now())?;
+        drop(conn);
+        if should_refresh_geo {
+            self.refresh_installation_geo(&input.installation_id, &metadata.ip, false)
+                .await?;
         }
 
+        let conn = self.conn.lock().await;
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| AppError::Internal(format!("begin share claim tx failed: {e}")))?;
@@ -314,13 +380,26 @@ impl AppStore {
         Ok(())
     }
 
-    pub async fn batch_sync_shares(&self, input: ShareBatchSyncRequest) -> Result<(), AppError> {
+    pub async fn batch_sync_shares(
+        &self,
+        input: ShareBatchSyncRequest,
+        metadata: ClientMetadata,
+    ) -> Result<(), AppError> {
         let conn = self.conn.lock().await;
-        let exists = get_installation(&conn, &input.installation_id)?.is_some();
-        if !exists {
+        let installation = get_installation(&conn, &input.installation_id)?;
+        let Some(installation) = installation else {
             return Err(AppError::Unauthorized("installation not found".into()));
+        };
+        let should_refresh_geo =
+            should_refresh_installation_geo(&installation, metadata.ip.as_deref());
+        touch_installation_presence(&conn, &input.installation_id, &metadata, Utc::now())?;
+        drop(conn);
+        if should_refresh_geo {
+            self.refresh_installation_geo(&input.installation_id, &metadata.ip, false)
+                .await?;
         }
 
+        let conn = self.conn.lock().await;
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| AppError::Internal(format!("begin batch sync tx failed: {e}")))?;
@@ -359,13 +438,23 @@ impl AppStore {
     pub async fn batch_sync_share_request_logs(
         &self,
         input: ShareRequestLogBatchSyncRequest,
+        metadata: ClientMetadata,
     ) -> Result<(), AppError> {
         let conn = self.conn.lock().await;
-        let exists = get_installation(&conn, &input.installation_id)?.is_some();
-        if !exists {
+        let installation = get_installation(&conn, &input.installation_id)?;
+        let Some(installation) = installation else {
             return Err(AppError::Unauthorized("installation not found".into()));
+        };
+        let should_refresh_geo =
+            should_refresh_installation_geo(&installation, metadata.ip.as_deref());
+        touch_installation_presence(&conn, &input.installation_id, &metadata, Utc::now())?;
+        drop(conn);
+        if should_refresh_geo {
+            self.refresh_installation_geo(&input.installation_id, &metadata.ip, false)
+                .await?;
         }
 
+        let conn = self.conn.lock().await;
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| AppError::Internal(format!("begin request log batch sync tx failed: {e}")))?;
@@ -379,6 +468,7 @@ impl AppStore {
 
     pub async fn dashboard_snapshot(
         &self,
+        config: &Config,
         proxy: &ProxyRegistry,
     ) -> Result<DashboardResponse, AppError> {
         let active_subdomains = proxy.active_subdomains().await.into_iter().collect::<HashSet<_>>();
@@ -407,6 +497,7 @@ impl AppStore {
         }
 
         let mut installation_views = Vec::new();
+        let mut client_map_points = Vec::new();
         for installation in installations {
             let mut lease_views = Vec::new();
             let mut active_lease_count = 0usize;
@@ -429,10 +520,26 @@ impl AppStore {
                 }
                 lease_views.sort_by(|a, b| b.issued_at.cmp(&a.issued_at));
             }
+            let is_active = active_lease_count > 0;
+            client_map_points.push(DashboardMapPoint {
+                id: installation.id.clone(),
+                label: installation.platform.clone(),
+                point_type: "client".into(),
+                platform: Some(installation.platform.clone()),
+                country_code: installation.country_code.clone(),
+                country: installation.country.clone(),
+                region: installation.region.clone(),
+                city: installation.city.clone(),
+                lat: installation.latitude,
+                lon: installation.longitude,
+                last_seen_at: Some(installation.last_seen_at),
+                is_active,
+            });
             installation_views.push(InstallationView {
                 id: installation.id,
                 platform: installation.platform,
                 app_version: installation.app_version,
+                country_code: installation.country_code,
                 created_at: installation.created_at,
                 last_seen_at: installation.last_seen_at,
                 active_lease_count,
@@ -497,6 +604,23 @@ impl AppStore {
                     .sum(),
                 active_shares: active_share_ids.len(),
             },
+            map: DashboardMap {
+                server: config.server_lat.zip(config.server_lon).map(|(lat, lon)| DashboardMapPoint {
+                    id: "server".into(),
+                    label: config.server_label.clone(),
+                    point_type: "server".into(),
+                    platform: None,
+                    country_code: None,
+                    country: None,
+                    region: None,
+                    city: None,
+                    lat: Some(lat),
+                    lon: Some(lon),
+                    last_seen_at: Some(now),
+                    is_active: true,
+                }),
+                clients: client_map_points,
+            },
             installations: installation_views,
             shares: share_views,
         })
@@ -549,13 +673,23 @@ impl AppStore {
     pub async fn record_share_heartbeat(
         &self,
         input: ShareHeartbeatRequest,
+        metadata: ClientMetadata,
     ) -> Result<(), AppError> {
         let conn = self.conn.lock().await;
-        let exists = get_installation(&conn, &input.installation_id)?.is_some();
-        if !exists {
+        let installation = get_installation(&conn, &input.installation_id)?;
+        let Some(installation) = installation else {
             return Err(AppError::Unauthorized("installation not found".into()));
-        }
+        };
         let now = Utc::now().timestamp();
+        let should_refresh_geo =
+            should_refresh_installation_geo(&installation, metadata.ip.as_deref());
+        touch_installation_presence(&conn, &input.installation_id, &metadata, Utc::now())?;
+        drop(conn);
+        if should_refresh_geo {
+            self.refresh_installation_geo(&input.installation_id, &metadata.ip, false)
+                .await?;
+        }
+        let conn = self.conn.lock().await;
         conn.execute(
             "INSERT INTO share_health_checks (share_id, checked_at, is_healthy) VALUES (?1, ?2, 1)",
             params![input.share_id, now],
@@ -580,6 +714,55 @@ impl AppStore {
             .ok_or_else(|| AppError::Conflict("share subdomain is not claimed".into()))?;
         share.subdomain = existing_subdomain;
         upsert_share_tx(&conn, installation_id, share)?;
+        Ok(())
+    }
+
+    async fn refresh_installation_geo(
+        &self,
+        installation_id: &str,
+        ip: &Option<String>,
+        force: bool,
+    ) -> Result<(), AppError> {
+        let Some(ip) = ip.as_deref().map(str::trim).filter(|v| !v.is_empty()) else {
+            return Ok(());
+        };
+        if !force {
+            let conn = self.conn.lock().await;
+            let state = get_installation_geo_state(&conn, installation_id)?;
+            let Some(state) = state else {
+                return Ok(());
+            };
+            if state.last_seen_ip.as_deref() == Some(ip)
+                && state.latitude.is_some()
+                && state.longitude.is_some()
+            {
+                return Ok(());
+            }
+        }
+        let Some(geo) = lookup_ip_im_geo(ip).await else {
+            return Ok(());
+        };
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE installations
+             SET country_code = COALESCE(?2, country_code),
+                 country = COALESCE(?3, country),
+                 region = COALESCE(?4, region),
+                 city = COALESCE(?5, city),
+                 latitude = COALESCE(?6, latitude),
+                 longitude = COALESCE(?7, longitude)
+             WHERE id = ?1",
+            params![
+                installation_id,
+                geo.country_code,
+                geo.country,
+                geo.region,
+                geo.city,
+                geo.latitude,
+                geo.longitude,
+            ],
+        )
+        .map_err(|e| AppError::Internal(format!("update installation geo failed: {e}")))?;
         Ok(())
     }
 }
@@ -694,6 +877,13 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             public_key TEXT NOT NULL,
             platform TEXT NOT NULL,
             app_version TEXT NOT NULL,
+            last_seen_ip TEXT,
+            country_code TEXT,
+            country TEXT,
+            region TEXT,
+            city TEXT,
+            latitude REAL,
+            longitude REAL,
             created_at TEXT NOT NULL,
             last_seen_at TEXT NOT NULL
         );
@@ -774,6 +964,41 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
     )
     .map_err(|e| AppError::Internal(format!("init schema failed: {e}")))?;
     let columns = conn
+        .prepare("PRAGMA table_info(installations)")
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|e| AppError::Internal(format!("inspect installations schema failed: {e}")))?;
+    if !columns.iter().any(|name| name == "last_seen_ip") {
+        conn.execute("ALTER TABLE installations ADD COLUMN last_seen_ip TEXT", [])
+            .map_err(|e| AppError::Internal(format!("add installations last_seen_ip failed: {e}")))?;
+    }
+    if !columns.iter().any(|name| name == "country_code") {
+        conn.execute("ALTER TABLE installations ADD COLUMN country_code TEXT", [])
+            .map_err(|e| AppError::Internal(format!("add installations country_code failed: {e}")))?;
+    }
+    if !columns.iter().any(|name| name == "country") {
+        conn.execute("ALTER TABLE installations ADD COLUMN country TEXT", [])
+            .map_err(|e| AppError::Internal(format!("add installations country failed: {e}")))?;
+    }
+    if !columns.iter().any(|name| name == "region") {
+        conn.execute("ALTER TABLE installations ADD COLUMN region TEXT", [])
+            .map_err(|e| AppError::Internal(format!("add installations region failed: {e}")))?;
+    }
+    if !columns.iter().any(|name| name == "city") {
+        conn.execute("ALTER TABLE installations ADD COLUMN city TEXT", [])
+            .map_err(|e| AppError::Internal(format!("add installations city failed: {e}")))?;
+    }
+    if !columns.iter().any(|name| name == "latitude") {
+        conn.execute("ALTER TABLE installations ADD COLUMN latitude REAL", [])
+            .map_err(|e| AppError::Internal(format!("add installations latitude failed: {e}")))?;
+    }
+    if !columns.iter().any(|name| name == "longitude") {
+        conn.execute("ALTER TABLE installations ADD COLUMN longitude REAL", [])
+            .map_err(|e| AppError::Internal(format!("add installations longitude failed: {e}")))?;
+    }
+    let columns = conn
         .prepare("PRAGMA table_info(shares)")
         .and_then(|mut stmt| {
             let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -797,7 +1022,7 @@ fn get_installation(
     installation_id: &str,
 ) -> Result<Option<Installation>, AppError> {
     conn.query_row(
-        "SELECT id, public_key, platform, app_version, created_at, last_seen_at
+        "SELECT id, public_key, platform, app_version, last_seen_ip, country_code, country, region, city, latitude, longitude, created_at, last_seen_at
          FROM installations WHERE id = ?1",
         params![installation_id],
         |row| {
@@ -806,8 +1031,15 @@ fn get_installation(
                 public_key: row.get(1)?,
                 platform: row.get(2)?,
                 app_version: row.get(3)?,
-                created_at: parse_dt_sql(&row.get::<_, String>(4)?)?,
-                last_seen_at: parse_dt_sql(&row.get::<_, String>(5)?)?,
+                last_seen_ip: row.get(4)?,
+                country_code: row.get(5)?,
+                country: row.get(6)?,
+                region: row.get(7)?,
+                city: row.get(8)?,
+                latitude: row.get(9)?,
+                longitude: row.get(10)?,
+                created_at: parse_dt_sql(&row.get::<_, String>(11)?)?,
+                last_seen_at: parse_dt_sql(&row.get::<_, String>(12)?)?,
             })
         },
     )
@@ -833,7 +1065,7 @@ fn get_lease_by_connection_id(
 fn list_installations(conn: &Connection) -> Result<Vec<Installation>, AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, public_key, platform, app_version, created_at, last_seen_at
+            "SELECT id, public_key, platform, app_version, last_seen_ip, country_code, country, region, city, latitude, longitude, created_at, last_seen_at
              FROM installations ORDER BY last_seen_at DESC",
         )
         .map_err(|e| AppError::Internal(format!("prepare installations failed: {e}")))?;
@@ -844,12 +1076,135 @@ fn list_installations(conn: &Connection) -> Result<Vec<Installation>, AppError> 
                 public_key: row.get(1)?,
                 platform: row.get(2)?,
                 app_version: row.get(3)?,
-                created_at: parse_dt_sql(&row.get::<_, String>(4)?)?,
-                last_seen_at: parse_dt_sql(&row.get::<_, String>(5)?)?,
+                last_seen_ip: row.get(4)?,
+                country_code: row.get(5)?,
+                country: row.get(6)?,
+                region: row.get(7)?,
+                city: row.get(8)?,
+                latitude: row.get(9)?,
+                longitude: row.get(10)?,
+                created_at: parse_dt_sql(&row.get::<_, String>(11)?)?,
+                last_seen_at: parse_dt_sql(&row.get::<_, String>(12)?)?,
             })
         })
         .map_err(|e| AppError::Internal(format!("query installations failed: {e}")))?;
     collect_rows(rows)
+}
+
+fn get_installation_geo_state(
+    conn: &Connection,
+    installation_id: &str,
+) -> Result<Option<InstallationGeoState>, AppError> {
+    conn.query_row(
+        "SELECT last_seen_ip, latitude, longitude FROM installations WHERE id = ?1",
+        params![installation_id],
+        |row| {
+            Ok(InstallationGeoState {
+                last_seen_ip: row.get(0)?,
+                latitude: row.get(1)?,
+                longitude: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| AppError::Internal(format!("query installation geo state failed: {e}")))
+}
+
+fn touch_installation_presence(
+    conn: &Connection,
+    installation_id: &str,
+    metadata: &ClientMetadata,
+    now: DateTime<Utc>,
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE installations
+         SET last_seen_at = ?2,
+             last_seen_ip = COALESCE(?3, last_seen_ip),
+             country_code = COALESCE(?4, country_code)
+         WHERE id = ?1",
+        params![
+            installation_id,
+            now.to_rfc3339(),
+            metadata.ip.as_deref(),
+            metadata.country_code.as_deref(),
+        ],
+    )
+    .map_err(|e| AppError::Internal(format!("update installation failed: {e}")))?;
+    Ok(())
+}
+
+fn should_refresh_installation_geo(
+    installation: &Installation,
+    next_ip: Option<&str>,
+) -> bool {
+    let Some(next_ip) = next_ip.map(str::trim).filter(|v| !v.is_empty()) else {
+        return false;
+    };
+    installation.last_seen_ip.as_deref() != Some(next_ip)
+        || installation.latitude.is_none()
+        || installation.longitude.is_none()
+}
+
+async fn lookup_ip_im_geo(ip: &str) -> Option<GeoLookupResult> {
+    let url = format!("https://ip.im/{ip}");
+    let client = reqwest::Client::builder()
+        .user_agent("portr-rs/0.1")
+        .timeout(StdDuration::from_secs(3))
+        .build()
+        .ok()?;
+    let response = timeout(StdDuration::from_secs(4), client.get(url).send())
+        .await
+        .ok()?
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body = response.text().await.ok()?;
+    parse_ip_im_geo(&body)
+}
+
+fn parse_ip_im_geo(body: &str) -> Option<GeoLookupResult> {
+    let mut result = GeoLookupResult {
+        country_code: None,
+        country: None,
+        region: None,
+        city: None,
+        latitude: None,
+        longitude: None,
+    };
+
+    for raw_line in body.lines() {
+        let line = raw_line.trim();
+        if let Some(value) = line.strip_prefix("Country:") {
+            let value = value.trim();
+            if value.len() == 2 && value.chars().all(|ch| ch.is_ascii_alphabetic()) {
+                result.country_code = Some(value.to_ascii_uppercase());
+            } else if !value.is_empty() {
+                result.country = Some(value.to_string());
+            }
+        } else if let Some(value) = line.strip_prefix("Region:") {
+            let value = value.trim();
+            if !value.is_empty() {
+                result.region = Some(value.to_string());
+            }
+        } else if let Some(value) = line.strip_prefix("City:") {
+            let value = value.trim();
+            if !value.is_empty() {
+                result.city = Some(value.to_string());
+            }
+        } else if let Some(value) = line.strip_prefix("Loc:") {
+            let value = value.trim();
+            if let Some((lat, lon)) = value.split_once(',') {
+                result.latitude = lat.trim().parse().ok();
+                result.longitude = lon.trim().parse().ok();
+            }
+        }
+    }
+
+    if result.latitude.is_none() || result.longitude.is_none() {
+        return None;
+    }
+    Some(result)
 }
 
 fn list_leases(conn: &Connection) -> Result<Vec<TunnelLease>, AppError> {
