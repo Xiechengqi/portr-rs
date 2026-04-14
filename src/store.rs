@@ -907,21 +907,21 @@ fn list_recent_share_request_logs(
     collect_rows(rows)
 }
 
-fn list_health_checks(conn: &Connection, limit: usize) -> Result<HashMap<String, Vec<HealthCheckEntry>>, AppError> {
+fn list_health_checks(
+    conn: &Connection,
+    minutes: usize,
+) -> Result<HashMap<String, Vec<HealthCheckEntry>>, AppError> {
+    let cutoff = Utc::now().timestamp() - (minutes as i64 - 1) * 60;
     let mut stmt = conn
         .prepare(
             "SELECT share_id, checked_at, is_healthy
-             FROM (
-                 SELECT share_id, checked_at, is_healthy,
-                        ROW_NUMBER() OVER (PARTITION BY share_id ORDER BY checked_at DESC) AS rn
-                 FROM share_health_checks
-             )
-             WHERE rn <= ?1
+             FROM share_health_checks
+             WHERE checked_at >= ?1
              ORDER BY checked_at ASC",
         )
         .map_err(|e| AppError::Internal(format!("prepare health checks failed: {e}")))?;
     let rows = stmt
-        .query_map(params![limit as i64], |row| {
+        .query_map(params![cutoff], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 HealthCheckEntry {
