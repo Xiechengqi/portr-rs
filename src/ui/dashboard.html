@@ -689,7 +689,6 @@
                 <th>Share</th>
                 <th>API URL&KEY</th>
                 <th>Usage</th>
-                <th>Status</th>
                 <th>Expires</th>
                 <th>Health</th>
                 <th>Online</th>
@@ -1210,9 +1209,6 @@
               <strong>${formatNum(share.tokensUsed)} / ${formatNum(share.tokenLimit)}</strong>
               <div class="usage-bar"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>
             </td>
-            <td>
-              <span class="badge ${share.shareStatus === 'active' ? 'badge--active' : ''}">${share.shareStatus}</span>
-            </td>
             <td title="${fullTime(share.expiresAt)}">
               <strong>${fullTime(share.expiresAt)}</strong>
             </td>
@@ -1222,7 +1218,7 @@
             </td>
             <td><span class="row-arrow">&rsaquo;</span></td>
           </tr>`;
-        }).join("") : `<tr><td colspan="8"><div class="empty"><div class="empty-icon"></div>No shares yet</div></td></tr>`;
+        }).join("") : `<tr><td colspan="7"><div class="empty"><div class="empty-icon"></div>No shares yet</div></td></tr>`;
       }
 
       boot().catch(err => {

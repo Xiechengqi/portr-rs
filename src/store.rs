@@ -554,6 +554,16 @@ impl AppStore {
                 .or_default()
                 .push(lease);
         }
+        let mut active_share_subdomains_by_installation: HashMap<String, HashSet<String>> =
+            HashMap::new();
+        for (installation_id, share, _) in &shares {
+            if active_subdomains.contains(&share.subdomain) {
+                active_share_subdomains_by_installation
+                    .entry(installation_id.clone())
+                    .or_default()
+                    .insert(share.subdomain.clone());
+            }
+        }
 
         let mut installation_views = Vec::new();
         let mut client_map_points = Vec::new();
@@ -581,7 +591,10 @@ impl AppStore {
                 lease_views.sort_by(|a, b| b.issued_at.cmp(&a.issued_at));
             }
             let active_lease_count = active_subdomains_for_installation.len();
-            let is_active = active_lease_count > 0;
+            let is_active = active_share_subdomains_by_installation
+                .get(&installation.id)
+                .map(|subdomains| !subdomains.is_empty())
+                .unwrap_or(false);
             client_map_points.push(DashboardMapPoint {
                 id: installation.id.clone(),
                 label: installation.platform.clone(),
