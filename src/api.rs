@@ -1,3 +1,4 @@
+use std::fs;
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, State};
@@ -22,6 +23,7 @@ pub fn router(state: ServerState) -> Router {
         .route("/favicon.ico", get(favicon))
         .route("/v1/healthz", get(health))
         .route("/v1/dashboard", get(dashboard))
+        .route("/v1/regions", get(regions))
         .route("/v1/dashboard/presence", post(dashboard_presence))
         .route("/v1/installations/register", post(register_installation))
         .route("/v1/tunnels/lease", post(issue_lease))
@@ -84,6 +86,19 @@ async fn dashboard(State(state): State<ServerState>) -> Result<Json<DashboardRes
             .dashboard_snapshot(&state.config, &state.server_geo, &state.proxy)
             .await?,
     ))
+}
+
+async fn regions() -> Result<Json<Vec<String>>, AppError> {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/regions");
+    let content = fs::read_to_string(path)
+        .map_err(|e| AppError::Internal(format!("read regions failed: {e}")))?;
+    let regions = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    Ok(Json(regions))
 }
 
 async fn dashboard_presence(

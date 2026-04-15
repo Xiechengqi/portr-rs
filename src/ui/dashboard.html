@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>portr-rs Console</title>
+    <title>TokenHub</title>
     <style>
       :root {
         --background: #fafafa;
@@ -70,6 +70,28 @@
         flex-wrap: wrap;
         font-size: 13px;
         color: var(--muted-foreground);
+      }
+      .topbar-region {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--card);
+      }
+      .topbar-region label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--foreground);
+      }
+      .topbar-region select {
+        border: 0;
+        background: transparent;
+        color: var(--foreground);
+        font: inherit;
+        outline: none;
+        cursor: pointer;
       }
       .topbar-right strong {
         font-weight: 600;
@@ -647,8 +669,13 @@
     <main class="page">
       <!-- Topbar -->
       <div class="topbar">
-        <span class="topbar-brand"><span class="dot"></span>portr-rs console</span>
+        <span class="topbar-brand"><span class="dot"></span>TokenHub</span>
         <div class="topbar-right">
+          <div class="topbar-region">
+            <label for="region-select">Region</label>
+            <select id="region-select" aria-label="Region"></select>
+          </div>
+          <span class="topbar-sep">&middot;</span>
           <strong id="stat-installations">0</strong> installations
           <span class="topbar-sep">&middot;</span>
           <strong id="stat-shares">0</strong> shares
@@ -750,6 +777,7 @@
       let _mapPanX = 0;
       let _mapPanY = 0;
       let _mapDragState = null;
+      let _regions = [];
       const _pagePresenceSession = (window.crypto && crypto.randomUUID)
         ? crypto.randomUUID()
         : `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -838,6 +866,53 @@
         const host = window.location.hostname || "localhost";
         const proto = window.location.protocol || "https:";
         return `${proto}//${subdomain}.${host}`;
+      }
+
+      function isLocalHost(hostname) {
+        return hostname === "localhost"
+          || hostname === "127.0.0.1"
+          || hostname === "0.0.0.0"
+          || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+      }
+
+      function getBaseUrl() {
+        const hostname = window.location.hostname || "localhost";
+        if (isLocalHost(hostname)) return hostname;
+        const parts = hostname.split(".");
+        if (parts.length >= 3) return parts.slice(1).join(".");
+        return hostname;
+      }
+
+      function currentRegion() {
+        const hostname = window.location.hostname || "";
+        const label = hostname.split(".")[0] || "";
+        return _regions.includes(label) ? label : "";
+      }
+
+      function regionUrl(region) {
+        const baseUrl = getBaseUrl();
+        if (isLocalHost(baseUrl)) {
+          const proto = window.location.protocol || "http:";
+          const port = window.location.port ? `:${window.location.port}` : "";
+          return `${proto}//${region}.${baseUrl}${port}`;
+        }
+        return `https://${region}.${baseUrl}`;
+      }
+
+      async function bootRegions() {
+        const select = document.getElementById("region-select");
+        if (!select) return;
+
+        const res = await fetch("/v1/regions");
+        _regions = res.ok ? await res.json() : [];
+        select.innerHTML = _regions.map((region) => {
+          const selected = region === currentRegion() ? " selected" : "";
+          return `<option value="${escapeHtml(region)}"${selected}>${escapeHtml(region)}</option>`;
+        }).join("");
+        select.disabled = _regions.length === 0;
+        if (!select.value && _regions.length > 0) {
+          select.value = _regions[0];
+        }
       }
 
       function formatPct(value) {
@@ -1020,6 +1095,15 @@
         });
         window.addEventListener("resize", () => applyMapZoom());
         applyMapZoom();
+      }
+
+      function bindRegionSelect() {
+        const select = document.getElementById("region-select");
+        if (!select) return;
+        select.addEventListener("change", () => {
+          if (!select.value) return;
+          window.location.href = regionUrl(select.value);
+        });
       }
 
       function healthDots(checks) {
@@ -1256,6 +1340,8 @@
         }).join("") : `<tr><td colspan="8"><div class="empty"><div class="empty-icon"></div>No shares yet</div></td></tr>`;
       }
 
+      bootRegions().catch(console.error);
+      bindRegionSelect();
       boot().catch(err => {
         document.body.innerHTML += `<pre style="padding:20px;color:#b91c1c">${String(err)}</pre>`;
       });
