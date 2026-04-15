@@ -95,11 +95,11 @@
           #f8fbff;
         border: 1px solid rgba(226, 232, 240, 0.9);
         overflow: hidden;
-        cursor: default;
+        cursor: grab;
         user-select: none;
       }
-      .map-shell.zoomed { cursor: grab; }
       .map-shell.dragging { cursor: grabbing; }
+      .map-shell.dragging .map-canvas { transition: none; }
       .map-controls {
         position: absolute;
         left: 16px;
@@ -150,10 +150,15 @@
       }
       .map-canvas {
         position: absolute;
-        inset: 0;
+        left: 50%;
+        top: 50%;
+        width: 100%;
+        aspect-ratio: 2 / 1;
+        transform: translate(-50%, -50%);
         transform-origin: center center;
         transition: transform 0.18s ease-out;
         z-index: 0;
+        will-change: transform;
       }
       .world-image,
       .map-overlay {
@@ -181,8 +186,9 @@
       }
       .map-overlay line {
         stroke: rgba(0, 82, 255, 0.18);
-        stroke-width: 1.4;
-        stroke-dasharray: 4 4;
+        stroke-width: 0.5;
+        stroke-dasharray: 1.5 1.5;
+        vector-effect: non-scaling-stroke;
       }
       #map-points {
         position: absolute;
@@ -636,7 +642,7 @@
         <div class="map-shell" id="map-shell">
           <div class="map-canvas" id="map-canvas">
             <div class="world-image" aria-hidden="true"></div>
-            <svg class="map-overlay" id="map-overlay" viewBox="0 0 1000 520" preserveAspectRatio="none"></svg>
+            <svg class="map-overlay" id="map-overlay" viewBox="0 0 360 180"></svg>
             <div id="map-points"></div>
           </div>
           <div class="map-controls">
@@ -842,8 +848,8 @@
         const pointsEl = document.getElementById("map-points");
         const overlayEl = document.getElementById("map-overlay");
         const emptyEl = document.getElementById("map-empty");
-        const width = 1000;
-        const height = 520;
+        const width = 360;
+        const height = 180;
         const clients = (map?.clients || []).map((item) => {
           const lat = item.lat ?? COUNTRY_CENTROIDS[item.countryCode]?.[0];
           const lon = item.lon ?? COUNTRY_CENTROIDS[item.countryCode]?.[1];
@@ -893,23 +899,34 @@
         return Math.max(1, Math.min(3, value));
       }
 
+      function clampMapPan() {
+        const shell = document.getElementById("map-shell");
+        const canvas = document.getElementById("map-canvas");
+        if (!shell || !canvas) return;
+        const sw = shell.clientWidth;
+        const sh = shell.clientHeight;
+        const cw = canvas.offsetWidth * _mapZoom;
+        const ch = canvas.offsetHeight * _mapZoom;
+        const maxX = Math.max(0, (cw - sw) / 2);
+        const maxY = Math.max(0, (ch - sh) / 2);
+        _mapPanX = Math.max(-maxX, Math.min(maxX, _mapPanX));
+        _mapPanY = Math.max(-maxY, Math.min(maxY, _mapPanY));
+      }
+
       function applyMapZoom() {
         const canvas = document.getElementById("map-canvas");
         const label = document.getElementById("map-zoom-label");
         const shell = document.getElementById("map-shell");
         if (!canvas || !label) return;
-        canvas.style.transform = `translate(${_mapPanX}px, ${_mapPanY}px) scale(${_mapZoom})`;
+        clampMapPan();
+        canvas.style.transform =
+          `translate(-50%, -50%) translate(${_mapPanX}px, ${_mapPanY}px) scale(${_mapZoom})`;
         label.textContent = `${Math.round(_mapZoom * 100)}%`;
         shell?.classList.toggle("zoomed", _mapZoom > 1.001);
       }
 
       function setMapZoom(nextZoom) {
-        const clamped = clampMapZoom(nextZoom);
-        if (clamped <= 1) {
-          _mapPanX = 0;
-          _mapPanY = 0;
-        }
-        _mapZoom = clamped;
+        _mapZoom = clampMapZoom(nextZoom);
         applyMapZoom();
       }
 
@@ -934,7 +951,7 @@
           setMapZoom(_mapZoom + delta);
         }, { passive: false });
         shell?.addEventListener("mousedown", (event) => {
-          if (_mapZoom <= 1.001) return;
+          if (event.button !== 0) return;
           _mapDragState = {
             startX: event.clientX,
             startY: event.clientY,
@@ -942,6 +959,7 @@
             panY: _mapPanY,
           };
           shell.classList.add("dragging");
+          event.preventDefault();
         });
         window.addEventListener("mousemove", (event) => {
           if (!_mapDragState) return;
@@ -956,6 +974,8 @@
         shell?.addEventListener("mouseleave", () => {
           if (!_mapDragState) shell.classList.remove("dragging");
         });
+        window.addEventListener("resize", () => applyMapZoom());
+        applyMapZoom();
       }
 
       function healthDots(checks) {
