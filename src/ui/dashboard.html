@@ -163,8 +163,7 @@
         height: 100%;
       }
       .world-image {
-        object-fit: fill;
-        object-position: center center;
+        background: url("/assets/world-map.svg") center center / 100% 100% no-repeat;
         opacity: 0.72;
         z-index: 0;
         filter: saturate(0.4) hue-rotate(180deg) brightness(1.02);
@@ -636,7 +635,7 @@
       <section class="section">
         <div class="map-shell" id="map-shell">
           <div class="map-canvas" id="map-canvas">
-            <img class="world-image" src="/assets/world-map.svg" alt="" />
+            <div class="world-image" aria-hidden="true"></div>
             <svg class="map-overlay" id="map-overlay" viewBox="0 0 1000 520" preserveAspectRatio="none"></svg>
             <div id="map-points"></div>
           </div>
