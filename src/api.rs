@@ -4,6 +4,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::routing::{any, get, post};
 use axum::{Json, Router, response::Html};
+use serde::Serialize;
 
 use crate::ServerState;
 use crate::error::AppError;
@@ -16,6 +17,13 @@ use crate::models::{
 use crate::proxy::proxy_handler;
 
 const REGIONS: &str = include_str!("../regions");
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RegionOption {
+    name: String,
+    url: String,
+}
 
 pub fn router(state: ServerState) -> Router {
     Router::new()
@@ -89,13 +97,26 @@ async fn dashboard(State(state): State<ServerState>) -> Result<Json<DashboardRes
     ))
 }
 
-async fn regions() -> Result<Json<Vec<String>>, AppError> {
+async fn regions() -> Result<Json<Vec<RegionOption>>, AppError> {
     let regions = REGIONS
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
+        .map(|line| {
+            let (name, url) = line.split_once(':').ok_or_else(|| {
+                AppError::Internal(format!("invalid region entry: {line}"))
+            })?;
+            let name = name.trim();
+            let url = url.trim();
+            if name.is_empty() || url.is_empty() {
+                return Err(AppError::Internal(format!("invalid region entry: {line}")));
+            }
+            Ok(RegionOption {
+                name: name.to_string(),
+                url: url.to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
     Ok(Json(regions))
 }
 
