@@ -4,7 +4,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::ServerState;
 
@@ -23,12 +23,7 @@ pub struct ProxyRegistry {
 }
 
 impl ProxyRegistry {
-    pub async fn set_route(
-        &self,
-        subdomain: String,
-        backend: String,
-        share_token: Option<String>,
-    ) {
+    pub async fn set_route(&self, subdomain: String, backend: String, share_token: Option<String>) {
         self.routes.write().await.insert(
             subdomain,
             RouteEntry {
@@ -79,6 +74,13 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/".to_string());
+    let is_portr_probe = parts
+        .headers
+        .get("x-portr-probe")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+        && matches!(parts.uri.path(), "/_portr/health");
 
     let host_without_port = host.split(':').next().unwrap_or(&host);
     let tunnel_suffix = format!(".{}", state.config.tunnel_domain);
@@ -200,15 +202,27 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         response.headers_mut().insert(name, value.clone());
     }
     strip_connection_listed_headers(response.headers_mut());
-    info!(
-        method = %method,
-        host = %host,
-        path = %path_and_query,
-        backend = %backend,
-        status = %status.as_u16(),
-        share_token = %log_token,
-        "proxy request completed"
-    );
+    if is_portr_probe {
+        debug!(
+            method = %method,
+            host = %host,
+            path = %path_and_query,
+            backend = %backend,
+            status = %status.as_u16(),
+            share_token = %log_token,
+            "proxy health probe completed"
+        );
+    } else {
+        info!(
+            method = %method,
+            host = %host,
+            path = %path_and_query,
+            backend = %backend,
+            status = %status.as_u16(),
+            share_token = %log_token,
+            "proxy request completed"
+        );
+    }
     response
 }
 
