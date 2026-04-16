@@ -694,6 +694,7 @@ impl AppStore {
                 ShareView {
                     share_id: share.share_id,
                     share_name: share.share_name,
+                    description: share.description,
                     subdomain: share.subdomain,
                     share_token: share.share_token,
                     app_type: share.app_type,
@@ -1167,15 +1168,17 @@ fn upsert_share_tx(
     installation_id: &str,
     share: ShareDescriptor,
 ) -> Result<(), AppError> {
+    let description = normalize_share_description(share.description.clone())?;
     conn.execute(
         "INSERT INTO shares (
-            share_id, installation_id, share_name, subdomain, share_token, app_type, provider_id,
+            share_id, installation_id, share_name, description, subdomain, share_token, app_type, provider_id,
             enabled_claude, enabled_codex, enabled_gemini,
             token_limit, tokens_used, requests_count, share_status, created_at, expires_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         ON CONFLICT(share_id) DO UPDATE SET
             installation_id = excluded.installation_id,
             share_name = excluded.share_name,
+            description = excluded.description,
             subdomain = excluded.subdomain,
             share_token = excluded.share_token,
             app_type = excluded.app_type,
@@ -1194,6 +1197,7 @@ fn upsert_share_tx(
             share.share_id,
             installation_id,
             share.share_name,
+            description,
             share.subdomain,
             share.share_token,
             share.app_type,
@@ -1348,6 +1352,7 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             share_id TEXT PRIMARY KEY,
             installation_id TEXT NOT NULL,
             share_name TEXT NOT NULL,
+            description TEXT,
             subdomain TEXT,
             share_token TEXT NOT NULL,
             app_type TEXT NOT NULL,
@@ -1556,6 +1561,10 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
     if !columns.iter().any(|name| name == "subdomain") {
         conn.execute("ALTER TABLE shares ADD COLUMN subdomain TEXT", [])
             .map_err(|e| AppError::Internal(format!("add shares subdomain failed: {e}")))?;
+    }
+    if !columns.iter().any(|name| name == "description") {
+        conn.execute("ALTER TABLE shares ADD COLUMN description TEXT", [])
+            .map_err(|e| AppError::Internal(format!("add shares description failed: {e}")))?;
     }
     if !columns.iter().any(|name| name == "enabled_claude") {
         conn.execute(
@@ -1945,7 +1954,7 @@ fn list_leases(conn: &Connection) -> Result<Vec<TunnelLease>, AppError> {
 fn list_shares(conn: &Connection) -> Result<Vec<(String, ShareDescriptor, usize)>, AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT s.installation_id, s.share_id, s.share_name, COALESCE(s.subdomain, '-'), s.share_token, s.app_type, s.provider_id,
+            "SELECT s.installation_id, s.share_id, s.share_name, s.description, COALESCE(s.subdomain, '-'), s.share_token, s.app_type, s.provider_id,
                     s.enabled_claude, s.enabled_codex, s.enabled_gemini,
                     s.token_limit, s.tokens_used, s.requests_count, s.share_status, s.created_at, s.expires_at,
                     (
@@ -1964,27 +1973,44 @@ fn list_shares(conn: &Connection) -> Result<Vec<(String, ShareDescriptor, usize)
                 ShareDescriptor {
                     share_id: row.get(1)?,
                     share_name: row.get(2)?,
-                    subdomain: row.get(3)?,
-                    share_token: row.get(4)?,
-                    app_type: row.get(5)?,
-                    provider_id: row.get(6)?,
+                    description: row.get(3)?,
+                    subdomain: row.get(4)?,
+                    share_token: row.get(5)?,
+                    app_type: row.get(6)?,
+                    provider_id: row.get(7)?,
                     support: ShareSupport {
-                        claude: row.get::<_, i64>(7)? != 0,
-                        codex: row.get::<_, i64>(8)? != 0,
-                        gemini: row.get::<_, i64>(9)? != 0,
+                        claude: row.get::<_, i64>(8)? != 0,
+                        codex: row.get::<_, i64>(9)? != 0,
+                        gemini: row.get::<_, i64>(10)? != 0,
                     },
-                    token_limit: row.get(10)?,
-                    tokens_used: row.get(11)?,
-                    requests_count: row.get(12)?,
-                    share_status: row.get(13)?,
-                    created_at: row.get(14)?,
-                    expires_at: row.get(15)?,
+                    token_limit: row.get(11)?,
+                    tokens_used: row.get(12)?,
+                    requests_count: row.get(13)?,
+                    share_status: row.get(14)?,
+                    created_at: row.get(15)?,
+                    expires_at: row.get(16)?,
                 },
-                row.get::<_, i64>(16)? as usize,
+                row.get::<_, i64>(17)? as usize,
             ))
         })
         .map_err(|e| AppError::Internal(format!("query shares failed: {e}")))?;
     collect_rows(rows)
+}
+
+fn normalize_share_description(description: Option<String>) -> Result<Option<String>, AppError> {
+    let Some(description) = description else {
+        return Ok(None);
+    };
+    let trimmed = description.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.chars().count() > 200 {
+        return Err(AppError::BadRequest(
+            "share description must be 200 characters or fewer".into(),
+        ));
+    }
+    Ok(Some(trimmed.to_string()))
 }
 
 fn list_recent_share_request_logs(

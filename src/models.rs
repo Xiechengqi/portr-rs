@@ -216,6 +216,8 @@ pub struct ShareSupport {
 pub struct ShareDescriptor {
     pub share_id: String,
     pub share_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub subdomain: String,
     pub share_token: String,
     pub app_type: String,
@@ -324,6 +326,8 @@ pub struct LeaseView {
 pub struct ShareView {
     pub share_id: String,
     pub share_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub subdomain: String,
     pub share_token: String,
     pub app_type: String,
