@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
@@ -2092,7 +2092,90 @@ fn list_recent_share_request_logs(
             })
         })
         .map_err(|e| AppError::Internal(format!("query recent share request logs failed: {e}")))?;
-    collect_rows(rows)
+    let logs = collect_rows(rows)?;
+    Ok(deduplicate_recent_share_request_logs(logs))
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct RecentShareLogFingerprint {
+    share_id: String,
+    created_at: i64,
+    model: String,
+    request_model: String,
+    status_code: u16,
+    latency_ms: u64,
+    first_token_ms: Option<u64>,
+    input_tokens: u32,
+    output_tokens: u32,
+    cache_read_tokens: u32,
+    cache_creation_tokens: u32,
+    is_streaming: bool,
+    session_id: Option<String>,
+}
+
+fn deduplicate_recent_share_request_logs(
+    logs: Vec<ShareRequestLogEntry>,
+) -> Vec<ShareRequestLogEntry> {
+    let mut deduped = Vec::with_capacity(logs.len());
+    let mut seen = HashMap::<RecentShareLogFingerprint, usize>::new();
+
+    for log in logs {
+        let fingerprint = RecentShareLogFingerprint {
+            share_id: log.share_id.clone(),
+            created_at: log.created_at,
+            model: log.model.clone(),
+            request_model: log.request_model.clone(),
+            status_code: log.status_code,
+            latency_ms: log.latency_ms,
+            first_token_ms: log.first_token_ms,
+            input_tokens: log.input_tokens,
+            output_tokens: log.output_tokens,
+            cache_read_tokens: log.cache_read_tokens,
+            cache_creation_tokens: log.cache_creation_tokens,
+            is_streaming: log.is_streaming,
+            session_id: log.session_id.clone(),
+        };
+
+        match seen.entry(fingerprint) {
+            Entry::Vacant(entry) => {
+                entry.insert(deduped.len());
+                deduped.push(log);
+            }
+            Entry::Occupied(entry) => {
+                let existing = &mut deduped[*entry.get()];
+                if prefer_share_request_log(&log, existing) {
+                    *existing = log;
+                }
+            }
+        }
+    }
+
+    deduped
+}
+
+fn prefer_share_request_log(
+    candidate: &ShareRequestLogEntry,
+    existing: &ShareRequestLogEntry,
+) -> bool {
+    let candidate_name = candidate.provider_name.trim();
+    let existing_name = existing.provider_name.trim();
+    let candidate_has_display_name =
+        !candidate_name.is_empty() && candidate_name != candidate.provider_id;
+    let existing_has_display_name =
+        !existing_name.is_empty() && existing_name != existing.provider_id;
+    if candidate_has_display_name != existing_has_display_name {
+        return candidate_has_display_name;
+    }
+
+    let candidate_model_score = usize::from(!candidate.model.trim().is_empty())
+        + usize::from(!candidate.request_model.trim().is_empty());
+    let existing_model_score = usize::from(!existing.model.trim().is_empty())
+        + usize::from(!existing.request_model.trim().is_empty());
+    if candidate_model_score != existing_model_score {
+        return candidate_model_score > existing_model_score;
+    }
+
+    candidate.request_id > existing.request_id
 }
 
 fn list_health_checks(
