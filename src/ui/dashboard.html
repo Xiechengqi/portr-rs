@@ -972,8 +972,30 @@
           );
         }
 
+        // Detect clients overlapping with server and offset them into a ring
+        const OVERLAP_DIST = 2; // percentage threshold
+        const OFFSET_RADIUS = 3; // percentage offset radius
+        const overlapping = [];
+        const nonOverlapping = [];
         for (const client of clients) {
           const point = projectPoint(client.lat, client.lon, width, height);
+          if (serverPoint && Math.hypot(point.xPct - serverPoint.xPct, point.yPct - serverPoint.yPct) < OVERLAP_DIST) {
+            overlapping.push({ client, point });
+          } else {
+            nonOverlapping.push({ client, point });
+          }
+        }
+        // Spread overlapping clients in a ring around the server
+        for (let i = 0; i < overlapping.length; i++) {
+          const angle = (2 * Math.PI * i) / overlapping.length - Math.PI / 2;
+          overlapping[i].point.xPct = serverPoint.xPct + Math.cos(angle) * OFFSET_RADIUS;
+          overlapping[i].point.yPct = serverPoint.yPct + Math.sin(angle) * OFFSET_RADIUS;
+          overlapping[i].point.x = (overlapping[i].point.xPct / 100) * width;
+          overlapping[i].point.y = (overlapping[i].point.yPct / 100) * height;
+        }
+        const allClients = [...nonOverlapping, ...overlapping];
+
+        for (const { client, point } of allClients) {
           if (serverPoint) {
             lines.push(`<line x1="${serverPoint.x}" y1="${serverPoint.y}" x2="${point.x}" y2="${point.y}"></line>`);
           }
