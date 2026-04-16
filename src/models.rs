@@ -237,17 +237,17 @@ pub struct DashboardResponse {
     pub generated_at: DateTime<Utc>,
     pub stats: DashboardStats,
     pub map: DashboardMap,
-    pub installations: Vec<InstallationView>,
-    pub shares: Vec<ShareView>,
+    pub clients: Vec<DashboardClientView>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardStats {
-    pub installations: usize,
-    pub shares: usize,
+    pub clients: usize,
+    pub clients_with_share: usize,
+    pub active_clients: usize,
+    pub active_shared_clients: usize,
     pub active_leases: usize,
-    pub active_shares: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -283,12 +283,14 @@ pub struct DashboardMapPoint {
     pub is_active: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallationView {
     pub id: String,
     pub platform: String,
     pub app_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub country_code: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -298,6 +300,14 @@ pub struct InstallationView {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardClientView {
+    pub installation: InstallationView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<ShareView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LeaseView {
     pub connection_id: String,
@@ -311,7 +321,7 @@ pub struct LeaseView {
     pub share: Option<ShareDescriptor>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareView {
     pub share_id: String,

@@ -15,9 +15,9 @@ use crate::ServerGeo;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::models::{
-    ClientMetadata, DashboardMap, DashboardMapPoint, DashboardPresenceRequest, DashboardResponse,
-    DashboardStats, HealthCheckEntry, Installation, InstallationView, IssueLeaseRequest,
-    IssueLeaseResponse, LatLonPoint, LeaseView, PublicMapPointsResponse,
+    ClientMetadata, DashboardClientView, DashboardMap, DashboardMapPoint, DashboardPresenceRequest,
+    DashboardResponse, DashboardStats, HealthCheckEntry, Installation, InstallationView,
+    IssueLeaseRequest, IssueLeaseResponse, LatLonPoint, LeaseView, PublicMapPointsResponse,
     RegisterInstallationRequest, RegisterInstallationResponse, ShareBatchSyncRequest,
     ShareClaimSubdomainRequest, ShareDeleteRequest, ShareDescriptor, ShareHeartbeatRequest,
     ShareRequestLogBatchSyncRequest, ShareRequestLogEntry, ShareRequestLogFetchResponse,
@@ -27,6 +27,7 @@ use crate::proxy::ProxyRegistry;
 
 const SHARE_REQUEST_LOG_RECOVERY_LIMIT: usize = 10;
 const PUBLIC_MAP_CLIENT_ACTIVE_WINDOW_MINUTES: i64 = 5;
+const DASHBOARD_ACTIVE_CLIENT_WINDOW_MINUTES: i64 = 5;
 
 #[derive(Clone)]
 pub struct AppStore {
@@ -615,6 +616,7 @@ impl AppStore {
                 id: installation.id,
                 platform: installation.platform,
                 app_version: installation.app_version,
+                region: installation.region,
                 country_code: installation.country_code,
                 created_at: installation.created_at,
                 last_seen_at: installation.last_seen_at,
@@ -624,14 +626,10 @@ impl AppStore {
         }
         installation_views.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
 
-        let mut active_share_ids = HashSet::new();
         let share_views = shares
             .into_iter()
             .map(|(installation_id, share, _active_lease_count)| {
                 let active_lease_count = usize::from(active_subdomains.contains(&share.subdomain));
-                if active_lease_count > 0 {
-                    active_share_ids.insert(share.share_id.clone());
-                }
                 let recent_requests = logs_by_share
                     .get(&share.share_id)
                     .cloned()
@@ -664,17 +662,54 @@ impl AppStore {
                 }
             })
             .collect::<Vec<_>>();
+        let mut share_by_installation = HashMap::<String, ShareView>::new();
+        for share in &share_views {
+            let installation_id = share.installation_id.clone();
+            match share_by_installation.get(&installation_id) {
+                Some(existing) if !prefer_dashboard_share(share, existing) => {}
+                _ => {
+                    share_by_installation.insert(installation_id, share.clone());
+                }
+            }
+        }
+        let client_views = installation_views
+            .iter()
+            .cloned()
+            .map(|installation| DashboardClientView {
+                share: share_by_installation.remove(&installation.id),
+                installation,
+            })
+            .collect::<Vec<_>>();
+        let active_client_cutoff =
+            Utc::now() - Duration::minutes(DASHBOARD_ACTIVE_CLIENT_WINDOW_MINUTES);
+        let clients_count = client_views.len();
+        let clients_with_share_count = client_views
+            .iter()
+            .filter(|client| client.share.is_some())
+            .count();
+        let active_clients_count = client_views
+            .iter()
+            .filter(|client| client.installation.last_seen_at >= active_client_cutoff)
+            .count();
+        let active_shared_clients_count = client_views
+            .iter()
+            .filter(|client| {
+                client.share.is_some() && client.installation.last_seen_at >= active_client_cutoff
+            })
+            .count();
+        let active_leases_count = client_views
+            .iter()
+            .map(|client| client.installation.active_lease_count)
+            .sum();
 
         Ok(DashboardResponse {
             generated_at: now,
             stats: DashboardStats {
-                installations: installation_views.len(),
-                shares: share_views.len(),
-                active_leases: installation_views
-                    .iter()
-                    .map(|installation| installation.active_lease_count)
-                    .sum(),
-                active_shares: active_share_ids.len(),
+                clients: clients_count,
+                clients_with_share: clients_with_share_count,
+                active_clients: active_clients_count,
+                active_shared_clients: active_shared_clients_count,
+                active_leases: active_leases_count,
             },
             map: DashboardMap {
                 server: server_geo
@@ -696,8 +731,7 @@ impl AppStore {
                     }),
                 clients: client_map_points,
             },
-            installations: installation_views,
-            shares: share_views,
+            clients: client_views,
         })
     }
 
@@ -1680,6 +1714,18 @@ fn should_refresh_installation_geo(installation: &Installation, next_ip: Option<
     installation.last_seen_ip.as_deref() != Some(next_ip)
         || installation.latitude.is_none()
         || installation.longitude.is_none()
+}
+
+fn prefer_dashboard_share(candidate: &ShareView, existing: &ShareView) -> bool {
+    let candidate_active = candidate.active_lease_count > 0 || candidate.share_status == "active";
+    let existing_active = existing.active_lease_count > 0 || existing.share_status == "active";
+    if candidate_active != existing_active {
+        return candidate_active;
+    }
+    if candidate.created_at != existing.created_at {
+        return candidate.created_at > existing.created_at;
+    }
+    candidate.share_id > existing.share_id
 }
 
 fn haversine_distance_km(

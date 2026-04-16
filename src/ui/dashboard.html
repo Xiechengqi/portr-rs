@@ -676,13 +676,15 @@
             <select id="region-select" aria-label="Router"></select>
           </div>
           <span class="topbar-sep">&middot;</span>
-          <strong id="stat-installations">0</strong> installations
+          <strong id="stat-clients">0</strong> clients
           <span class="topbar-sep">&middot;</span>
-          <strong id="stat-shares">0</strong> shares
+          <strong id="stat-clients-with-share">0</strong> with share
+          <span class="topbar-sep">&middot;</span>
+          <strong id="stat-active-clients">0</strong> active clients
+          <span class="topbar-sep">&middot;</span>
+          <strong id="stat-active-shared-clients">0</strong> active shared clients
           <span class="topbar-sep">&middot;</span>
           <strong id="stat-leases">0</strong> active leases
-          <span class="topbar-sep">&middot;</span>
-          <strong id="stat-active-shares">0</strong> active shares
           <span class="topbar-sync">synced <span id="last-sync">--</span></span>
         </div>
       </div>
@@ -717,35 +719,17 @@
             <thead>
               <tr>
                 <th>Platform</th>
+                <th>Region</th>
                 <th>Version</th>
                 <th>Last seen</th>
+                <th>Share</th>
+                <th>Status</th>
+                <th>Usage</th>
                 <th>Active leases</th>
                 <th style="width:28px"></th>
               </tr>
             </thead>
             <tbody id="clients"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Shares -->
-      <section class="section">
-        <div class="section-label">SHARES <span id="share-count">0</span></div>
-        <div class="table-card">
-          <table>
-            <thead>
-              <tr>
-                <th>Share</th>
-                <th>API URL&KEY</th>
-                <th>Support</th>
-                <th>Usage</th>
-                <th>Expires</th>
-                <th>Health</th>
-                <th>Online</th>
-                <th style="width:28px"></th>
-              </tr>
-            </thead>
-            <tbody id="shares"></tbody>
           </table>
         </div>
       </section>
@@ -770,8 +754,7 @@
     </aside>
 
     <script>
-      let _installations = [];
-      let _shares = [];
+      let _clients = [];
       let _drawerOpen = false;
       let _mapZoom = 1;
       let _mapPanX = 0;
@@ -832,13 +815,6 @@
         return `${Math.floor(diff / 86400)}d ago`;
       }
 
-      function maskToken(value) {
-        if (!value) return "--";
-        if (value.length === 1) return "*";
-        if (value.length === 2) return value.slice(0, 1) + "*";
-        return value.slice(0, 1) + "***" + value.slice(-1);
-      }
-
       function totalTokens(log) {
         return (log.inputTokens || 0) + (log.outputTokens || 0) +
                (log.cacheReadTokens || 0) + (log.cacheCreationTokens || 0);
@@ -860,12 +836,6 @@
         if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
         if (n >= 10_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
         return String(n);
-      }
-
-      function shareApiUrl(subdomain) {
-        const host = window.location.hostname || "localhost";
-        const proto = window.location.protocol || "https:";
-        return `${proto}//${subdomain}.${host}`;
       }
 
       function normalizeRegionUrl(url) {
@@ -909,6 +879,11 @@
       function formatPct(value) {
         if (value == null || Number.isNaN(value)) return "0.0%";
         return `${value.toFixed(1)}%`;
+      }
+
+      function formatShareStatus(value) {
+        if (!value) return "No share";
+        return String(value).replaceAll("_", " ");
       }
 
       function supportPills(support) {
@@ -1126,6 +1101,18 @@
         return `<span class="health-dots">${dots.join("")}</span>`;
       }
 
+      function shareStatusBadge(share) {
+        if (!share) return '<span class="badge">No share</span>';
+        const healthy = (share.healthChecks || []).some((item) => item.isHealthy);
+        if (share.shareStatus === "active") {
+          return `<span class="badge badge--active">${escapeHtml(formatShareStatus(share.shareStatus))}</span>`;
+        }
+        if (healthy) {
+          return `<span class="badge">${escapeHtml(formatShareStatus(share.shareStatus))}</span>`;
+        }
+        return `<span class="badge">${escapeHtml(formatShareStatus(share.shareStatus))}</span>`;
+      }
+
       async function updatePagePresence() {
         const res = await fetch("/v1/dashboard/presence", {
           method: "POST",
@@ -1160,8 +1147,10 @@
 
       /* ── Open client drawer ── */
       function openClient(index) {
-        const item = _installations[index];
-        if (!item) return;
+        const client = _clients[index];
+        if (!client) return;
+        const item = client.installation;
+        const share = client.share;
 
         document.getElementById("drawer-title").textContent = item.platform;
         document.getElementById("drawer-meta").innerHTML =
@@ -1182,7 +1171,34 @@
           </div>`;
 
         const leases = item.leases || [];
+        const pct = share ? usagePercent(share.tokensUsed, share.tokenLimit) : 0;
+        const shareSection = share ? `
+          <div class="drawer-section-label">Share</div>
+          <div class="item-card">
+            <div class="item-card-top">
+              <strong>${escapeHtml(share.shareName)}</strong>
+              ${shareStatusBadge(share)}
+            </div>
+            <div class="item-card-meta">
+              <span>${escapeHtml(share.subdomain)}</span>
+              <span title="${fullTime(share.expiresAt)}">expires ${relTime(share.expiresAt)}</span>
+              <span title="${share.onlineMinutes24h || 0} / 1440 min online in last 24h">${formatPct(share.onlineRate24h || 0)} online</span>
+            </div>
+            <div class="item-card-grid">
+              <div class="item-card-grid-cell">Usage<span>${formatNum(share.tokensUsed)} / ${formatNum(share.tokenLimit)}</span></div>
+              <div class="item-card-grid-cell">Requests<span>${formatNum(share.requestsCount)}</span></div>
+              <div class="item-card-grid-cell">Health<span>${healthDots(share.healthChecks || [])}</span></div>
+            </div>
+            <div style="margin-top:10px">${supportPills(share.support)}</div>
+            <div class="usage-bar" style="margin-top:10px;width:100%"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>
+          </div>
+        ` : `
+          <div class="drawer-section-label">Share</div>
+          <div class="empty"><div class="empty-icon"></div>No share linked to this client</div>
+        `;
+        const logs = share?.recentRequests || [];
         document.getElementById("drawer-body").innerHTML = `
+          ${shareSection}
           <div class="drawer-section-label">Leases</div>
           ${leases.length ? leases.map(lease => `
             <div class="item-card">
@@ -1197,38 +1213,7 @@
                 ${lease.share ? `<span>share: ${lease.share.shareName}</span>` : ""}
               </div>
             </div>
-          `).join("") : '<div class="empty"><div class="empty-icon"></div>No leases yet</div>'}`;
-
-        openDrawer();
-      }
-
-      /* ── Open share drawer ── */
-      function openShare(index) {
-        const share = _shares[index];
-        if (!share) return;
-
-        const pct = usagePercent(share.tokensUsed, share.tokenLimit);
-
-        document.getElementById("drawer-title").textContent = share.shareName;
-        document.getElementById("drawer-meta").innerHTML = "";
-
-        document.getElementById("drawer-summary").innerHTML = `
-          <div class="drawer-summary-item">
-            <small>Usage</small>
-            <strong>${formatNum(share.tokensUsed)} / ${formatNum(share.tokenLimit)}</strong>
-            <div class="usage-bar" style="margin-top:6px"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>
-          </div>
-          <div class="drawer-summary-item">
-            <small>Requests</small>
-            <strong>${share.requestsCount}</strong>
-          </div>
-          <div class="drawer-summary-item">
-            <small>Expires</small>
-            <strong title="${relTime(share.expiresAt)}">${fullTime(share.expiresAt)}</strong>
-          </div>`;
-
-        const logs = share.recentRequests || [];
-        document.getElementById("drawer-body").innerHTML = `
+          `).join("") : '<div class="empty"><div class="empty-icon"></div>No leases yet</div>'}
           <div class="drawer-section-label">Request logs</div>
           ${logs.length ? logs.map(log => `
             <div class="item-card">
@@ -1265,71 +1250,51 @@
         if (!res.ok) throw new Error("Failed to fetch: " + res.status);
         const data = await res.json();
 
-        _installations = data.installations || [];
-        _shares = data.shares || [];
+        _clients = data.clients || [];
 
         /* topbar stats */
-        document.getElementById("stat-installations").textContent = data.stats.installations;
-        document.getElementById("stat-shares").textContent = data.stats.shares;
+        document.getElementById("stat-clients").textContent = data.stats.clients;
+        document.getElementById("stat-clients-with-share").textContent = data.stats.clientsWithShare;
+        document.getElementById("stat-active-clients").textContent = data.stats.activeClients;
+        document.getElementById("stat-active-shared-clients").textContent = data.stats.activeSharedClients;
         document.getElementById("stat-leases").textContent = data.stats.activeLeases;
-        document.getElementById("stat-active-shares").textContent = data.stats.activeShares;
         document.getElementById("last-sync").textContent = relTime(data.generatedAt);
         document.getElementById("last-sync").title = fullTime(data.generatedAt);
         renderMap(data.map || null);
 
         /* section counts */
-        document.getElementById("client-count").textContent = _installations.length;
-        document.getElementById("share-count").textContent = _shares.length;
+        document.getElementById("client-count").textContent = _clients.length;
 
         /* skip DOM rewrite while drawer is open to prevent flicker */
         if (_drawerOpen) return;
 
         /* clients table */
         const clientsEl = document.getElementById("clients");
-        clientsEl.innerHTML = _installations.length ? _installations.map((item, i) => `
+        clientsEl.innerHTML = _clients.length ? _clients.map((client, i) => {
+          const item = client.installation;
+          const share = client.share;
+          const pct = share ? usagePercent(share.tokensUsed, share.tokenLimit) : 0;
+          return `
           <tr onclick="openClient(${i})">
             <td><strong>${item.platform}</strong></td>
+            <td class="meta">${escapeHtml(item.region || "—")}</td>
             <td class="meta">v${item.appVersion}</td>
             <td class="meta" title="${fullTime(item.lastSeenAt)}">${relTime(item.lastSeenAt)}</td>
+            <td>${share ? `<strong>${escapeHtml(share.shareName)}</strong>` : '<span class="meta">—</span>'}</td>
+            <td>${shareStatusBadge(share)}</td>
+            <td>
+              ${share ? `
+                <strong>${formatNum(share.tokensUsed)} / ${formatNum(share.tokenLimit)}</strong>
+                <div class="usage-bar"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>
+              ` : '<span class="meta">—</span>'}
+            </td>
             <td>${item.activeLeaseCount
               ? `<span class="badge badge--active">${item.activeLeaseCount}</span>`
               : '<span class="badge">0</span>'}</td>
             <td><span class="row-arrow">&rsaquo;</span></td>
           </tr>
-        `).join("") : `<tr><td colspan="5"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
-
-        /* shares table */
-        const sharesEl = document.getElementById("shares");
-        sharesEl.innerHTML = _shares.length ? _shares.map((share, i) => {
-          const pct = usagePercent(share.tokensUsed, share.tokenLimit);
-          return `
-          <tr onclick="openShare(${i})">
-            <td>
-              <strong>${share.shareName}</strong>
-            </td>
-            <td>
-              <div>
-                <strong>${shareApiUrl(share.subdomain)}</strong>
-              </div>
-              <div class="item-card-meta" style="margin-top:4px">
-                <span class="token-value">[${maskToken(share.shareToken)}]</span>
-              </div>
-            </td>
-            <td>${supportPills(share.support)}</td>
-            <td>
-              <strong>${formatNum(share.tokensUsed)} / ${formatNum(share.tokenLimit)}</strong>
-              <div class="usage-bar"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>
-            </td>
-            <td title="${fullTime(share.expiresAt)}">
-              <strong>${relTime(share.expiresAt)}</strong>
-            </td>
-            <td>${healthDots(share.healthChecks || [])}</td>
-            <td title="${share.onlineMinutes24h || 0} / 1440 min online in last 24h">
-              <strong>${formatPct(share.onlineRate24h || 0)}</strong>
-            </td>
-            <td><span class="row-arrow">&rsaquo;</span></td>
-          </tr>`;
-        }).join("") : `<tr><td colspan="8"><div class="empty"><div class="empty-icon"></div>No shares yet</div></td></tr>`;
+        `;
+        }).join("") : `<tr><td colspan="9"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
       }
 
       bootRegions().catch(console.error);
