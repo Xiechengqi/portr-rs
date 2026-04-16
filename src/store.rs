@@ -84,6 +84,7 @@ fn country_centroid(country_code: &str) -> Option<(f64, f64)> {
 #[derive(Clone)]
 pub struct AppStore {
     conn: Arc<Mutex<Connection>>,
+    share_log_recovery_attempts: Arc<Mutex<HashSet<String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +134,7 @@ impl AppStore {
         init_schema(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            share_log_recovery_attempts: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -841,6 +843,19 @@ impl AppStore {
                 )
             })
             .collect::<Vec<_>>();
+        let missing_shares = {
+            let mut attempted = self.share_log_recovery_attempts.lock().await;
+            missing_shares
+                .into_iter()
+                .filter(|(_, share_id, _)| {
+                    if attempted.contains(share_id) {
+                        return false;
+                    }
+                    attempted.insert(share_id.clone());
+                    true
+                })
+                .collect::<Vec<_>>()
+        };
 
         if missing_shares.is_empty() {
             return Ok(logs_by_share);
