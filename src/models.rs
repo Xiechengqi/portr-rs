@@ -176,6 +176,21 @@ pub struct HealthResponse {
     pub ok: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicMapPointsResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<LatLonPoint>,
+    pub clients: Vec<LatLonPoint>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatLonPoint {
+    pub lat: f64,
+    pub lon: f64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardPresenceRequest {

@@ -10,9 +10,10 @@ use crate::ServerState;
 use crate::error::AppError;
 use crate::models::{
     ClientMetadata, DashboardPresenceRequest, DashboardPresenceResponse, DashboardResponse,
-    HealthResponse, IssueLeaseRequest, IssueLeaseResponse, RegisterInstallationRequest,
-    RegisterInstallationResponse, ShareBatchSyncRequest, ShareClaimSubdomainRequest,
-    ShareDeleteRequest, ShareHeartbeatRequest, ShareRequestLogBatchSyncRequest, ShareSyncRequest,
+    HealthResponse, IssueLeaseRequest, IssueLeaseResponse, PublicMapPointsResponse,
+    RegisterInstallationRequest, RegisterInstallationResponse, ShareBatchSyncRequest,
+    ShareClaimSubdomainRequest, ShareDeleteRequest, ShareHeartbeatRequest,
+    ShareRequestLogBatchSyncRequest, ShareSyncRequest,
 };
 use crate::proxy::proxy_handler;
 
@@ -32,6 +33,7 @@ pub fn router(state: ServerState) -> Router {
         .route("/favicon.ico", get(favicon))
         .route("/v1/healthz", get(health))
         .route("/v1/dashboard", get(dashboard))
+        .route("/v1/public/map-points", get(public_map_points))
         .route("/v1/regions", get(regions))
         .route("/v1/dashboard/presence", post(dashboard_presence))
         .route("/v1/installations/register", post(register_installation))
@@ -97,15 +99,23 @@ async fn dashboard(State(state): State<ServerState>) -> Result<Json<DashboardRes
     ))
 }
 
+async fn public_map_points(
+    State(state): State<ServerState>,
+) -> Result<Json<PublicMapPointsResponse>, AppError> {
+    Ok(Json(
+        state.store.public_map_points(&state.server_geo).await?,
+    ))
+}
+
 async fn regions() -> Result<Json<Vec<RegionOption>>, AppError> {
     let regions = REGIONS
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(|line| {
-            let (name, url) = line.split_once(':').ok_or_else(|| {
-                AppError::Internal(format!("invalid region entry: {line}"))
-            })?;
+            let (name, url) = line
+                .split_once(':')
+                .ok_or_else(|| AppError::Internal(format!("invalid region entry: {line}")))?;
             let name = name.trim();
             let url = url.trim();
             if name.is_empty() || url.is_empty() {

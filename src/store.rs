@@ -17,14 +17,16 @@ use crate::error::AppError;
 use crate::models::{
     ClientMetadata, DashboardMap, DashboardMapPoint, DashboardPresenceRequest, DashboardResponse,
     DashboardStats, HealthCheckEntry, Installation, InstallationView, IssueLeaseRequest,
-    IssueLeaseResponse, LeaseView, RegisterInstallationRequest, RegisterInstallationResponse,
-    ShareBatchSyncRequest, ShareClaimSubdomainRequest, ShareDeleteRequest, ShareDescriptor,
-    ShareHeartbeatRequest, ShareRequestLogBatchSyncRequest, ShareRequestLogEntry,
-    ShareRequestLogFetchResponse, ShareSupport, ShareSyncRequest, ShareView, TunnelLease,
+    IssueLeaseResponse, LatLonPoint, LeaseView, PublicMapPointsResponse,
+    RegisterInstallationRequest, RegisterInstallationResponse, ShareBatchSyncRequest,
+    ShareClaimSubdomainRequest, ShareDeleteRequest, ShareDescriptor, ShareHeartbeatRequest,
+    ShareRequestLogBatchSyncRequest, ShareRequestLogEntry, ShareRequestLogFetchResponse,
+    ShareSupport, ShareSyncRequest, ShareView, TunnelLease,
 };
 use crate::proxy::ProxyRegistry;
 
 const SHARE_REQUEST_LOG_RECOVERY_LIMIT: usize = 10;
+const PUBLIC_MAP_CLIENT_ACTIVE_WINDOW_MINUTES: i64 = 5;
 
 #[derive(Clone)]
 pub struct AppStore {
@@ -884,6 +886,41 @@ impl AppStore {
             })
             .map_err(|e| AppError::Internal(format!("query route targets failed: {e}")))?;
         collect_rows(rows)
+    }
+
+    pub async fn public_map_points(
+        &self,
+        server_geo: &ServerGeo,
+    ) -> Result<PublicMapPointsResponse, AppError> {
+        let active_cutoff =
+            (Utc::now() - Duration::minutes(PUBLIC_MAP_CLIENT_ACTIVE_WINDOW_MINUTES)).to_rfc3339();
+        let conn = self.conn.lock().await;
+        let mut stmt = conn
+            .prepare(
+                "SELECT latitude, longitude
+                 FROM installations
+                 WHERE latitude IS NOT NULL
+                   AND longitude IS NOT NULL
+                   AND last_seen_at >= ?1
+                 ORDER BY last_seen_at DESC",
+            )
+            .map_err(|e| AppError::Internal(format!("prepare public map clients failed: {e}")))?;
+        let rows = stmt
+            .query_map(params![active_cutoff], |row| {
+                Ok(LatLonPoint {
+                    lat: row.get(0)?,
+                    lon: row.get(1)?,
+                })
+            })
+            .map_err(|e| AppError::Internal(format!("query public map clients failed: {e}")))?;
+
+        Ok(PublicMapPointsResponse {
+            server: server_geo
+                .lat
+                .zip(server_geo.lon)
+                .map(|(lat, lon)| LatLonPoint { lat, lon }),
+            clients: collect_rows(rows)?,
+        })
     }
 
     pub async fn record_share_route_health(

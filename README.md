@@ -30,6 +30,7 @@
 - `POST /v1/tunnels/lease`
 - `GET /v1/healthz`
 - `GET /v1/dashboard`
+- `GET /v1/public/map-points`
 - `POST /v1/shares/sync`
 - `POST /v1/shares/batch-sync`
 - `POST /v1/shares/delete`
