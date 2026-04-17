@@ -1256,9 +1256,9 @@ fn upsert_share_tx(
             enabled_claude = excluded.enabled_claude,
             enabled_codex = excluded.enabled_codex,
             enabled_gemini = excluded.enabled_gemini,
-            token_limit = MAX(shares.token_limit, excluded.token_limit),
-            tokens_used = MAX(shares.tokens_used, excluded.tokens_used),
-            requests_count = MAX(shares.requests_count, excluded.requests_count),
+            token_limit = excluded.token_limit,
+            tokens_used = excluded.tokens_used,
+            requests_count = excluded.requests_count,
             share_status = excluded.share_status,
             created_at = excluded.created_at,
             expires_at = excluded.expires_at,
@@ -1289,41 +1289,11 @@ fn upsert_share_tx(
     Ok(())
 }
 
-fn backfill_share_usage_from_logs_tx(conn: &Connection, share_id: &str) -> Result<(), AppError> {
-    conn.execute(
-        "UPDATE shares
-         SET tokens_used = MAX(
-                 tokens_used,
-                 COALESCE((
-                     SELECT SUM(
-                         input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
-                     )
-                     FROM share_request_logs
-                     WHERE share_id = ?1
-                 ), 0)
-             ),
-             requests_count = MAX(
-                 requests_count,
-                 COALESCE((
-                     SELECT COUNT(*)
-                     FROM share_request_logs
-                     WHERE share_id = ?1
-                 ), 0)
-             ),
-             updated_at = ?2
-         WHERE share_id = ?1",
-        params![share_id, Utc::now().to_rfc3339()],
-    )
-    .map_err(|e| AppError::Internal(format!("backfill share usage from logs failed: {e}")))?;
-    Ok(())
-}
-
 fn upsert_share_request_log_tx(
     conn: &Connection,
     installation_id: &str,
     log: ShareRequestLogEntry,
 ) -> Result<(), AppError> {
-    let share_id = log.share_id.clone();
     conn.execute(
         "INSERT INTO share_request_logs (
             request_id, installation_id, share_id, share_name, provider_id, provider_name,
@@ -1373,7 +1343,6 @@ fn upsert_share_request_log_tx(
         ],
     )
     .map_err(|e| AppError::Internal(format!("upsert share request log failed: {e}")))?;
-    backfill_share_usage_from_logs_tx(conn, &share_id)?;
     Ok(())
 }
 
