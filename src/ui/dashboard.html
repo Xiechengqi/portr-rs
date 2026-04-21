@@ -375,6 +375,36 @@
         font-size: 13px;
         color: var(--muted-foreground);
       }
+      .status-stack {
+        display: grid;
+        gap: 8px;
+        min-width: 200px;
+      }
+      .status-line {
+        display: grid;
+        grid-template-columns: 54px minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .status-line-label {
+        font: 11px/1 "JetBrains Mono", monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted-foreground);
+      }
+      .status-line-value {
+        min-width: 0;
+      }
+      .status-line-value strong {
+        display: block;
+      }
+      .status-line-value .usage-bar {
+        margin-top: 6px;
+      }
+      .status-line-value .health-dots {
+        justify-content: flex-start;
+      }
       .row-arrow {
         color: var(--border);
         font-size: 18px;
@@ -774,10 +804,7 @@
                 <th>API URL&KEY</th>
                 <th>ForSale</th>
                 <th>Region</th>
-                <th>Usage</th>
-                <th>Expires</th>
-                <th>Online</th>
-                <th>Health</th>
+                <th>Status</th>
                 <th>Support</th>
                 <th style="width:28px"></th>
               </tr>
@@ -876,7 +903,7 @@
       }
 
       function usagePercent(used, limit) {
-        if (!limit || limit <= 0) return 0;
+        if (isUnlimitedTokenLimit(limit) || !limit || limit <= 0) return 0;
         return Math.min(100, Math.round((used / limit) * 100));
       }
 
@@ -886,11 +913,21 @@
         return "usage-bar-fill";
       }
 
+      function isUnlimitedTokenLimit(limit) {
+        return limit === -1;
+      }
+
       function formatNum(n) {
         if (n == null) return "0";
         if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
         if (n >= 10_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
         return String(n);
+      }
+
+      function formatUsage(used, limit) {
+        return isUnlimitedTokenLimit(limit)
+          ? `${formatNum(used)}/∞`
+          : `${formatNum(used)} / ${formatNum(limit)}`;
       }
 
       function normalizeRegionUrl(url) {
@@ -1296,7 +1333,10 @@
           const onlineCmp = compareNumberDesc(leftShare?.onlineMinutes24h || 0, rightShare?.onlineMinutes24h || 0);
           if (onlineCmp) return onlineCmp;
 
-          const limitCmp = compareNumberDesc(leftShare?.tokenLimit || 0, rightShare?.tokenLimit || 0);
+          const limitCmp = compareNumberDesc(
+            isUnlimitedTokenLimit(leftShare?.tokenLimit) ? Number.POSITIVE_INFINITY : (leftShare?.tokenLimit || 0),
+            isUnlimitedTokenLimit(rightShare?.tokenLimit) ? Number.POSITIVE_INFINITY : (rightShare?.tokenLimit || 0),
+          );
           if (limitCmp) return limitCmp;
 
           const expiryCmp = compareNumberDesc(expirySortValue(leftShare), expirySortValue(rightShare));
@@ -1313,6 +1353,37 @@
           ? "for-sale-pill--yes"
           : (value === "Free" ? "for-sale-pill--free" : "for-sale-pill--no");
         return `<span class="for-sale-pill ${cls}">${value}</span>`;
+      }
+
+      function shareStatusStack(share, pct) {
+        if (!share) return '<span class="meta">—</span>';
+        const usage = `
+          <strong>${formatUsage(share.tokensUsed, share.tokenLimit)}</strong>
+          ${isUnlimitedTokenLimit(share.tokenLimit) ? "" : `<div class="usage-bar"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>`}
+        `;
+        const expires = `<strong title="${escapeHtml(expiryTitle(share.expiresAt))}">${escapeHtml(expiryLabel(share.expiresAt))}</strong>`;
+        const online = `<strong title="${share.onlineMinutes24h || 0} / 1440 min online in last 24h">${formatPct(share.onlineRate24h || 0)}</strong>`;
+        const health = healthDots(share.healthChecks || []);
+        return `
+          <div class="status-stack">
+            <div class="status-line">
+              <span class="status-line-label">Usage</span>
+              <div class="status-line-value">${usage}</div>
+            </div>
+            <div class="status-line">
+              <span class="status-line-label">Expires</span>
+              <div class="status-line-value">${expires}</div>
+            </div>
+            <div class="status-line">
+              <span class="status-line-label">Online</span>
+              <div class="status-line-value">${online}</div>
+            </div>
+            <div class="status-line">
+              <span class="status-line-label">Health</span>
+              <div class="status-line-value">${health}</div>
+            </div>
+          </div>
+        `;
       }
 
       async function updatePagePresence() {
@@ -1394,10 +1465,10 @@
             </div>
             ${description}
             <div class="item-card-grid">
-              <div class="item-card-grid-cell">Usage<span>${formatNum(share.tokensUsed)} / ${formatNum(share.tokenLimit)}</span></div>
+              <div class="item-card-grid-cell">Usage<span>${formatUsage(share.tokensUsed, share.tokenLimit)}</span></div>
               <div class="item-card-grid-cell">Requests<span>${formatNum(share.requestsCount)}</span></div>
             </div>
-            <div class="usage-bar usage-bar--full" style="margin-top:10px;width:100%"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>
+            ${isUnlimitedTokenLimit(share.tokenLimit) ? "" : `<div class="usage-bar usage-bar--full" style="margin-top:10px;width:100%"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>`}
           </div>
           ${upstreamDetails(share)}
         ` : `
@@ -1482,24 +1553,16 @@
           const pct = share ? usagePercent(share.tokensUsed, share.tokenLimit) : 0;
           return `
           <tr onclick="openClient(${i})">
-            <td>${share ? `<strong>${escapeHtml(share.shareName)}</strong><div class="meta">${escapeHtml(upstreamSummary(share))}</div><div class="meta">${escapeHtml(quotaSummary(share.upstreamProvider))}</div>` : '<span class="meta">—</span>'}</td>
+            <td>${share ? `<strong>${escapeHtml(share.shareName)}</strong>` : '<span class="meta">—</span>'}</td>
             <td class="meta">${share ? `<strong>${escapeHtml(shareApiUrlKey(share))}</strong>` : '<span class="meta">—</span>'}</td>
             <td>${forSalePill(share)}</td>
             <td class="meta">${escapeHtml(item.countryCode || "-")}</td>
-            <td>
-              ${share ? `
-                <strong>${formatNum(share.tokensUsed)} / ${formatNum(share.tokenLimit)}</strong>
-                <div class="usage-bar"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>
-              ` : '<span class="meta">—</span>'}
-            </td>
-            <td>${share ? `<strong title="${escapeHtml(expiryTitle(share.expiresAt))}">${escapeHtml(expiryLabel(share.expiresAt))}</strong>` : '<span class="meta">—</span>'}</td>
-            <td>${share ? `<strong title="${share.onlineMinutes24h || 0} / 1440 min online in last 24h">${formatPct(share.onlineRate24h || 0)}</strong>` : '<span class="meta">—</span>'}</td>
-            <td>${share ? healthDots(share.healthChecks || []) : '<span class="meta">—</span>'}</td>
+            <td>${shareStatusStack(share, pct)}</td>
             <td>${share ? supportPills(share.support) : '<span class="meta">—</span>'}</td>
             <td><span class="row-arrow">&rsaquo;</span></td>
           </tr>
         `;
-        }).join("") : `<tr><td colspan="10"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
+        }).join("") : `<tr><td colspan="7"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
       }
 
       bootRegions().catch(console.error);
