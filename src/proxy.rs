@@ -3,32 +3,97 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use std::collections::HashMap;
-use tokio::sync::RwLock;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::ServerState;
 
 /// Per-subdomain routing info.
-#[derive(Debug)]
-struct RouteEntry {
+#[derive(Debug, Clone)]
+pub(crate) struct RouteEntry {
     backend: String,
     /// Share token to inject as X-Share-Token when proxying.
     /// None for non-share tunnels.
     share_token: Option<String>,
+    share_id: Option<String>,
+    parallel_limit: i64,
+}
+
+#[derive(Debug, Default)]
+struct ShareConcurrencyLimiter {
+    shares: Mutex<HashMap<String, usize>>,
+}
+
+#[derive(Debug)]
+struct ShareConcurrencyPermit {
+    limiter: Arc<ShareConcurrencyLimiter>,
+    share_id: String,
+}
+
+impl Drop for ShareConcurrencyPermit {
+    fn drop(&mut self) {
+        let limiter = self.limiter.clone();
+        let share_id = self.share_id.clone();
+        tokio::spawn(async move {
+            let mut shares = limiter.shares.lock().await;
+            let should_remove = match shares.get_mut(&share_id) {
+                Some(inflight) if *inflight > 1 => {
+                    *inflight -= 1;
+                    false
+                }
+                Some(_) => true,
+                None => false,
+            };
+            if should_remove {
+                shares.remove(&share_id);
+            }
+        });
+    }
+}
+
+impl ShareConcurrencyLimiter {
+    async fn try_acquire(
+        self: &Arc<Self>,
+        share_id: &str,
+        parallel_limit: i64,
+    ) -> Option<ShareConcurrencyPermit> {
+        let limit = usize::try_from(parallel_limit).ok()?;
+        let mut shares = self.shares.lock().await;
+        let inflight = shares.entry(share_id.to_string()).or_insert(0);
+        if *inflight >= limit {
+            return None;
+        }
+        *inflight += 1;
+        Some(ShareConcurrencyPermit {
+            limiter: self.clone(),
+            share_id: share_id.to_string(),
+        })
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct ProxyRegistry {
     routes: RwLock<HashMap<String, RouteEntry>>,
+    limiter: Arc<ShareConcurrencyLimiter>,
 }
 
 impl ProxyRegistry {
-    pub async fn set_route(&self, subdomain: String, backend: String, share_token: Option<String>) {
+    pub async fn set_route(
+        &self,
+        subdomain: String,
+        backend: String,
+        share_token: Option<String>,
+        share_id: Option<String>,
+        parallel_limit: i64,
+    ) {
         self.routes.write().await.insert(
             subdomain,
             RouteEntry {
                 backend,
                 share_token,
+                share_id,
+                parallel_limit,
             },
         );
     }
@@ -37,26 +102,30 @@ impl ProxyRegistry {
         self.routes.write().await.remove(subdomain);
     }
 
-    pub async fn backend_for_host(
+    pub(crate) async fn backend_for_host(
         &self,
         host: &str,
         tunnel_domain: &str,
-    ) -> Option<(String, Option<String>)> {
+    ) -> Option<RouteEntry> {
         let host_without_port = host.split(':').next().unwrap_or(host);
         let suffix = format!(".{tunnel_domain}");
         if !host_without_port.ends_with(&suffix) {
             return None;
         }
         let subdomain = host_without_port.trim_end_matches(&suffix);
-        self.routes
-            .read()
-            .await
-            .get(subdomain)
-            .map(|e| (e.backend.clone(), e.share_token.clone()))
+        self.routes.read().await.get(subdomain).cloned()
     }
 
     pub async fn active_subdomains(&self) -> Vec<String> {
         self.routes.read().await.keys().cloned().collect()
+    }
+
+    async fn try_acquire_share_permit(
+        &self,
+        share_id: &str,
+        parallel_limit: i64,
+    ) -> Option<ShareConcurrencyPermit> {
+        self.limiter.try_acquire(share_id, parallel_limit).await
     }
 }
 
@@ -74,13 +143,15 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/".to_string());
+    let path = parts.uri.path().to_string();
+    let is_internal_portr_path = path.starts_with("/_portr");
     let is_portr_probe = parts
         .headers
         .get("x-portr-probe")
         .and_then(|value| value.to_str().ok())
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
-        && matches!(parts.uri.path(), "/_portr/health");
+        && matches!(path.as_str(), "/_portr/health");
 
     let host_without_port = host.split(':').next().unwrap_or(&host);
     let tunnel_suffix = format!(".{}", state.config.tunnel_domain);
@@ -97,7 +168,7 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         return simple_response(StatusCode::NOT_FOUND, "not-found");
     }
 
-    let Some((backend, route_share_token)) = state
+    let Some(route) = state
         .proxy
         .backend_for_host(&host, &state.config.tunnel_domain)
         .await
@@ -110,6 +181,8 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         );
         return simple_response(StatusCode::NOT_FOUND, "unregistered-subdomain");
     };
+    let backend = route.backend.clone();
+    let route_share_token = route.share_token.clone();
 
     // Determine effective share token: prefer client-supplied header,
     // fall back to the token registered with this tunnel route.
@@ -144,6 +217,36 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         .as_deref()
         .map(mask_token)
         .unwrap_or_else(|| "-".to_string());
+
+    let share_permit = if is_internal_portr_path {
+        None
+    } else if route.parallel_limit < 0 {
+        None
+    } else if let Some(share_id) = route.share_id.as_deref() {
+        match state
+            .proxy
+            .try_acquire_share_permit(share_id, route.parallel_limit)
+            .await
+        {
+            Some(permit) => Some(permit),
+            None => {
+                warn!(
+                    method = %method,
+                    host = %host,
+                    path = %path_and_query,
+                    share_id = %share_id,
+                    parallel_limit = route.parallel_limit,
+                    "proxy request rejected: share concurrency limit exceeded"
+                );
+                return simple_response(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "share-concurrency-limit-exceeded",
+                );
+            }
+        }
+    } else {
+        None
+    };
 
     let body = match axum::body::to_bytes(body, usize::MAX).await {
         Ok(body) => body,
@@ -189,7 +292,14 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
     // Stream the response body instead of buffering it entirely.
     // This is critical for SSE (text/event-stream) responses so that
     // downstream clients receive chunks in real time.
-    let body_stream = upstream.bytes_stream();
+    let body_stream = {
+        use futures_util::StreamExt;
+
+        upstream.bytes_stream().map(move |chunk| {
+            let _permit = &share_permit;
+            chunk
+        })
+    };
     let body = Body::from_stream(body_stream);
 
     let mut response = Response::new(body);
@@ -265,6 +375,68 @@ fn strip_connection_listed_headers(headers: &mut HeaderMap) {
     headers.remove("connection");
     for header in connection_values {
         headers.remove(header);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn share_concurrency_limiter_enforces_limit_and_releases_on_drop() {
+        let limiter = Arc::new(ShareConcurrencyLimiter::default());
+
+        let permit_1 = limiter
+            .try_acquire("share-1", 3)
+            .await
+            .expect("first permit");
+        let permit_2 = limiter
+            .try_acquire("share-1", 3)
+            .await
+            .expect("second permit");
+        let permit_3 = limiter
+            .try_acquire("share-1", 3)
+            .await
+            .expect("third permit");
+
+        assert!(limiter.try_acquire("share-1", 3).await.is_none());
+
+        drop(permit_1);
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+
+        let permit_4 = limiter
+            .try_acquire("share-1", 3)
+            .await
+            .expect("permit after release");
+
+        drop(permit_2);
+        drop(permit_3);
+        drop(permit_4);
+    }
+
+    #[tokio::test]
+    async fn backend_lookup_returns_share_metadata() {
+        let registry = ProxyRegistry::default();
+        registry
+            .set_route(
+                "demo".into(),
+                "127.0.0.1:3000".into(),
+                Some("token-demo".into()),
+                Some("share-1".into()),
+                5,
+            )
+            .await;
+
+        let route = registry
+            .backend_for_host("demo.example.com", "example.com")
+            .await
+            .expect("route metadata");
+
+        assert_eq!(route.backend, "127.0.0.1:3000");
+        assert_eq!(route.share_token.as_deref(), Some("token-demo"));
+        assert_eq!(route.share_id.as_deref(), Some("share-1"));
+        assert_eq!(route.parallel_limit, 5);
     }
 }
 

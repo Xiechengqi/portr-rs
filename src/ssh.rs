@@ -174,8 +174,16 @@ impl server::Handler for ClientHandler {
         *port = bound_port as u32;
         let backend = format!("{host}:{port}");
         let share_token = lease.share.as_ref().map(|s| s.share_token.clone());
+        let share_id = lease.share.as_ref().map(|s| s.share_id.clone());
+        let parallel_limit = lease.share.as_ref().map(|s| s.parallel_limit).unwrap_or(-1);
         self.proxy
-            .set_route(lease.subdomain.clone(), backend.clone(), share_token)
+            .set_route(
+                lease.subdomain.clone(),
+                backend.clone(),
+                share_token,
+                share_id,
+                parallel_limit,
+            )
             .await;
         self.backend = Some(backend.clone());
         let handle = session.handle();

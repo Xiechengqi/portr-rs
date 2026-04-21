@@ -829,6 +829,7 @@ impl AppStore {
                     app_type: share.app_type,
                     provider_id: share.provider_id,
                     token_limit: share.token_limit,
+                    parallel_limit: share.parallel_limit,
                     tokens_used: share.tokens_used,
                     requests_count: share.requests_count,
                     share_status: share.share_status,
@@ -1488,8 +1489,8 @@ fn upsert_share_tx(
         "INSERT INTO shares (
             share_id, installation_id, share_name, description, for_sale, subdomain, share_token, app_type, provider_id,
             enabled_claude, enabled_codex, enabled_gemini,
-            token_limit, tokens_used, requests_count, share_status, created_at, expires_at, upstream_provider_json, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+            token_limit, parallel_limit, tokens_used, requests_count, share_status, created_at, expires_at, upstream_provider_json, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
         ON CONFLICT(share_id) DO UPDATE SET
             installation_id = excluded.installation_id,
             share_name = excluded.share_name,
@@ -1503,6 +1504,7 @@ fn upsert_share_tx(
             enabled_codex = shares.enabled_codex,
             enabled_gemini = shares.enabled_gemini,
             token_limit = excluded.token_limit,
+            parallel_limit = excluded.parallel_limit,
             tokens_used = excluded.tokens_used,
             requests_count = excluded.requests_count,
             share_status = excluded.share_status,
@@ -1526,6 +1528,7 @@ fn upsert_share_tx(
             i64::from(share.support.codex as u8),
             i64::from(share.support.gemini as u8),
             share.token_limit,
+            share.parallel_limit,
             share.tokens_used,
             share.requests_count,
             share.share_status,
@@ -1652,6 +1655,7 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             enabled_codex INTEGER NOT NULL DEFAULT 0,
             enabled_gemini INTEGER NOT NULL DEFAULT 0,
             token_limit INTEGER NOT NULL,
+            parallel_limit INTEGER NOT NULL DEFAULT 3,
             tokens_used INTEGER NOT NULL,
             requests_count INTEGER NOT NULL,
             share_status TEXT NOT NULL,
@@ -1909,6 +1913,13 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
     if !columns.iter().any(|name| name == "app_runtimes_json") {
         conn.execute("ALTER TABLE shares ADD COLUMN app_runtimes_json TEXT", [])
             .map_err(|e| AppError::Internal(format!("add shares app_runtimes_json failed: {e}")))?;
+    }
+    if !columns.iter().any(|name| name == "parallel_limit") {
+        conn.execute(
+            "ALTER TABLE shares ADD COLUMN parallel_limit INTEGER NOT NULL DEFAULT 3",
+            [],
+        )
+        .map_err(|e| AppError::Internal(format!("add shares parallel_limit failed: {e}")))?;
     }
     if !columns.iter().any(|name| name == "runtime_refreshed_at") {
         conn.execute(
@@ -2373,7 +2384,7 @@ fn list_shares(conn: &Connection) -> Result<Vec<(String, ShareDescriptor, usize)
         .prepare(
             "SELECT s.installation_id, s.share_id, s.share_name, s.description, s.for_sale, COALESCE(s.subdomain, '-'), s.share_token, s.app_type, s.provider_id,
                     s.enabled_claude, s.enabled_codex, s.enabled_gemini,
-                    s.token_limit, s.tokens_used, s.requests_count, s.share_status, s.created_at, s.expires_at, s.upstream_provider_json, s.app_runtimes_json,
+                    s.token_limit, s.parallel_limit, s.tokens_used, s.requests_count, s.share_status, s.created_at, s.expires_at, s.upstream_provider_json, s.app_runtimes_json,
                     (
                         SELECT COUNT(*) FROM leases l
                         WHERE json_extract(l.share_json, '$.shareId') = s.share_id
@@ -2402,15 +2413,16 @@ fn list_shares(conn: &Connection) -> Result<Vec<(String, ShareDescriptor, usize)
                         gemini: row.get::<_, i64>(11)? != 0,
                     },
                     token_limit: row.get(12)?,
-                    tokens_used: row.get(13)?,
-                    requests_count: row.get(14)?,
-                    share_status: row.get(15)?,
-                    created_at: row.get(16)?,
-                    expires_at: row.get(17)?,
-                    upstream_provider: parse_upstream_provider(row.get(18)?)?,
-                    app_runtimes: parse_app_runtimes(row.get(19)?)?,
+                    parallel_limit: row.get(13)?,
+                    tokens_used: row.get(14)?,
+                    requests_count: row.get(15)?,
+                    share_status: row.get(16)?,
+                    created_at: row.get(17)?,
+                    expires_at: row.get(18)?,
+                    upstream_provider: parse_upstream_provider(row.get(19)?)?,
+                    app_runtimes: parse_app_runtimes(row.get(20)?)?,
                 },
-                row.get::<_, i64>(20)? as usize,
+                row.get::<_, i64>(21)? as usize,
             ))
         })
         .map_err(|e| AppError::Internal(format!("query shares failed: {e}")))?;
@@ -2968,8 +2980,8 @@ mod tests {
             "INSERT INTO shares (
                 share_id, installation_id, share_name, description, for_sale, subdomain, share_token,
                 app_type, provider_id, enabled_claude, enabled_codex, enabled_gemini, token_limit,
-                tokens_used, requests_count, share_status, created_at, expires_at, updated_at
-             ) VALUES (?1, ?2, ?3, NULL, 'No', ?4, 'token', 'proxy', NULL, 1, 1, 1, 1000, 0, 0, ?5, ?6, ?7, ?6)",
+                parallel_limit, tokens_used, requests_count, share_status, created_at, expires_at, updated_at
+             ) VALUES (?1, ?2, ?3, NULL, 'No', ?4, 'token', 'proxy', NULL, 1, 1, 1, 1000, 3, 0, 0, ?5, ?6, ?7, ?6)",
             params![
                 share_id,
                 installation_id,
@@ -3058,6 +3070,7 @@ mod tests {
             app_type: "proxy".into(),
             provider_id: None,
             token_limit: 1000,
+            parallel_limit: 3,
             tokens_used: 0,
             requests_count: 0,
             share_status: "paused".into(),
@@ -3160,6 +3173,7 @@ mod tests {
             app_type: "proxy".into(),
             provider_id: None,
             token_limit: 2048,
+            parallel_limit: 3,
             tokens_used: 12,
             requests_count: 3,
             share_status: "active".into(),
@@ -3432,10 +3446,10 @@ mod tests {
 
         let proxy = ProxyRegistry::default();
         proxy
-            .set_route("stale-sub".into(), "127.0.0.1:1234".into(), None)
+            .set_route("stale-sub".into(), "127.0.0.1:1234".into(), None, None, -1)
             .await;
         proxy
-            .set_route("fresh-sub".into(), "127.0.0.1:5678".into(), None)
+            .set_route("fresh-sub".into(), "127.0.0.1:5678".into(), None, None, -1)
             .await;
 
         let result = store

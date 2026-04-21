@@ -508,6 +508,11 @@
       .support-pill--on .support-pill-account {
         color: rgba(21, 128, 61, 0.82);
       }
+      .parallel-shared {
+        color: var(--muted-foreground);
+        font-weight: 500;
+        margin-left: 4px;
+      }
 
       /* ── Token value ── */
       .token-value {
@@ -1039,8 +1044,8 @@
           <span class="support-pill ${support?.[app.key] ? "support-pill--on" : ""}">
             <span class="support-pill-label">${app.label}</span>
             <span class="support-pill-meta">
-              <span class="support-pill-quota">${escapeHtml(support?.[app.key] ? quotaSummary(appRuntimeForApp(appRuntimes, app.key)) : "—")}</span>
-              <span class="support-pill-account">${escapeHtml(support?.[app.key] ? accountSummary(appRuntimeForApp(appRuntimes, app.key)) : "—")}</span>
+              <span class="support-pill-quota">${escapeHtml(support?.[app.key] ? quotaSummary(appRuntimeForApp(appRuntimes, app.key)) : "")}</span>
+              <span class="support-pill-account">${escapeHtml(support?.[app.key] ? accountSummary(appRuntimeForApp(appRuntimes, app.key)) : "")}</span>
             </span>
           </span>
         `).join("")}</div>`;
@@ -1052,24 +1057,24 @@
       }
 
       function quotaSummary(upstream) {
-        if (!upstream) return "No official subscription quota";
-        if (upstream.kind !== "official_oauth") return "No official subscription quota";
+        if (!upstream) return "";
+        if (upstream.kind !== "official_oauth") return "";
         const quota = upstream.quota;
-        if (!quota) return "Official quota unavailable";
-        if (quota.status && quota.status !== "ok") return "Official quota unavailable";
+        if (!quota) return "";
+        if (quota.status && quota.status !== "ok") return "";
         let tiers = (quota.tiers || []).filter((tier) => tier && tier.label);
         if (upstream.app === "claude") {
           const preferredLabels = new Set(["5h", "1w"]);
           const preferredTiers = tiers.filter((tier) => preferredLabels.has(String(tier.label).toLowerCase()));
           if (preferredTiers.length) tiers = preferredTiers;
         }
-        if (!tiers.length) return "Official quota unavailable";
+        if (!tiers.length) return "";
         return tiers.map((tier) => `${tier.label} ${Math.round(tier.utilization || 0)}%`).join(" · ");
       }
 
       function accountSummary(upstream) {
-        if (!upstream) return "Account —";
-        return upstream.accountEmail ? `Account ${upstream.accountEmail}` : "Account —";
+        if (!upstream) return "";
+        return upstream.accountEmail || "";
       }
 
       const COUNTRY_CENTROIDS = {
@@ -1403,6 +1408,9 @@
           ${isUnlimitedTokenLimit(share.tokenLimit) ? "" : `<div class="usage-bar"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>`}
         `;
         const expires = `<strong title="${escapeHtml(expiryTitle(share.expiresAt))}">${escapeHtml(expiryLabel(share.expiresAt))}</strong>`;
+        const parallel = share.parallelLimit === -1
+          ? `<strong>Unlimited</strong>`
+          : `<strong>${escapeHtml(String(share.parallelLimit || 3))}<span class="parallel-shared">shared</span></strong>`;
         const online = `<strong title="${share.onlineMinutes24h || 0} / 1440 min online in last 24h">${formatPct(share.onlineRate24h || 0)}</strong>`;
         const health = healthDots(share.healthChecks || []);
         return `
@@ -1414,6 +1422,10 @@
             <div class="status-line">
               <span class="status-line-label">Expires</span>
               <div class="status-line-value">${expires}</div>
+            </div>
+            <div class="status-line">
+              <span class="status-line-label">Parallel</span>
+              <div class="status-line-value">${parallel}</div>
             </div>
             <div class="status-line">
               <span class="status-line-label">Online</span>

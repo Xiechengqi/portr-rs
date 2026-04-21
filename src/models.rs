@@ -5,6 +5,10 @@ fn default_share_for_sale() -> String {
     "No".to_string()
 }
 
+fn default_share_parallel_limit() -> i64 {
+    3
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Installation {
@@ -302,6 +306,8 @@ pub struct ShareDescriptor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     pub token_limit: i64,
+    #[serde(default = "default_share_parallel_limit")]
+    pub parallel_limit: i64,
     pub tokens_used: i64,
     pub requests_count: i64,
     pub share_status: String,
@@ -417,6 +423,7 @@ pub struct ShareView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     pub token_limit: i64,
+    pub parallel_limit: i64,
     pub tokens_used: i64,
     pub requests_count: i64,
     pub share_status: String,

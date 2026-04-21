@@ -1554,6 +1554,7 @@ dependencies = [
  "bytes",
  "chrono",
  "ed25519-dalek",
+ "futures-util",
  "http",
  "rand 0.8.5",
  "reqwest",
