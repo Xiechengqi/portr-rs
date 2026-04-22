@@ -157,21 +157,10 @@ async fn dashboard_presence(
     Json(input): Json<DashboardPresenceRequest>,
 ) -> Result<Json<DashboardPresenceResponse>, AppError> {
     let online_count = state.store.record_dashboard_presence(input).await?;
-    let resend_usage_label = state
-        .resend_usage_cache
-        .lock()
-        .await
-        .as_ref()
-        .and_then(|cache| {
-            if cache.value.available && !cache.value.daily_usage_label.is_empty() {
-                Some(cache.value.daily_usage_label.clone())
-            } else {
-                None
-            }
-        });
+    let email_sent_24h = state.store.count_sent_emails_last_24h().await?;
     Ok(Json(DashboardPresenceResponse {
         online_count,
-        resend_usage_label,
+        email_sent_24h,
     }))
 }
 

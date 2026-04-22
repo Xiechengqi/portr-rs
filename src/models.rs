@@ -313,8 +313,7 @@ pub struct DashboardPresenceRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DashboardPresenceResponse {
     pub online_count: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resend_usage_label: Option<String>,
+    pub email_sent_24h: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

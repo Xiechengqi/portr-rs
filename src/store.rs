@@ -317,6 +317,21 @@ impl AppStore {
         Ok(count as usize)
     }
 
+    pub async fn count_sent_emails_last_24h(&self) -> Result<usize, AppError> {
+        let cutoff = (Utc::now() - Duration::hours(24)).to_rfc3339();
+        let conn = self.conn.lock().await;
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM email_send_logs
+                 WHERE status = 'sent'
+                   AND created_at >= ?1",
+                params![cutoff],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Internal(format!("count sent emails failed: {e}")))?;
+        Ok(count as usize)
+    }
+
     pub async fn request_email_code(
         &self,
         config: &Config,
@@ -351,7 +366,7 @@ impl AppStore {
 
         let code = generate_numeric_code(AUTH_CODE_DIGITS);
         let resend = resend.ok_or_else(|| AppError::Internal("resend is not configured".into()))?;
-        send_login_code_email(
+        let provider_message_id = send_login_code_email(
             resend,
             config,
             &email,
@@ -391,6 +406,20 @@ impl AppStore {
             ],
         )
         .map_err(|e| AppError::Internal(format!("insert auth challenge failed: {e}")))?;
+        conn.execute(
+            "INSERT INTO email_send_logs (
+                id, email_type, to_email, provider_message_id, status, error_message, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
+            params![
+                Uuid::new_v4().to_string(),
+                "login_code",
+                email,
+                provider_message_id,
+                "sent",
+                now.to_rfc3339(),
+            ],
+        )
+        .map_err(|e| AppError::Internal(format!("insert email send log failed: {e}")))?;
 
         Ok(RequestEmailCodeResponse {
             ok: true,
@@ -2091,6 +2120,16 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             last_seen_at INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS email_send_logs (
+            id TEXT PRIMARY KEY,
+            email_type TEXT NOT NULL,
+            to_email TEXT NOT NULL,
+            provider_message_id TEXT,
+            status TEXT NOT NULL,
+            error_message TEXT,
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS request_nonces (
             installation_id TEXT NOT NULL,
             action TEXT NOT NULL,
@@ -2142,6 +2181,7 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
         CREATE INDEX IF NOT EXISTS idx_share_request_logs_share_id ON share_request_logs(share_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_share_health_checks ON share_health_checks(share_id, checked_at DESC);
         CREATE INDEX IF NOT EXISTS idx_dashboard_presence_last_seen ON dashboard_presence(last_seen_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_email_send_logs_created_at ON email_send_logs(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_request_nonces_created_at ON request_nonces(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_auth_challenges_email ON email_login_challenges(email_normalized, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_auth_challenges_installation ON email_login_challenges(installation_id, created_at DESC);
@@ -2323,6 +2363,24 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
         )
         .map_err(|e| AppError::Internal(format!("add shares for_sale failed: {e}")))?;
     }
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS email_send_logs (
+            id TEXT PRIMARY KEY,
+            email_type TEXT NOT NULL,
+            to_email TEXT NOT NULL,
+            provider_message_id TEXT,
+            status TEXT NOT NULL,
+            error_message TEXT,
+            created_at TEXT NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| AppError::Internal(format!("create email_send_logs table failed: {e}")))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_email_send_logs_created_at ON email_send_logs(created_at DESC)",
+        [],
+    )
+    .map_err(|e| AppError::Internal(format!("create email_send_logs index failed: {e}")))?;
     if !columns.iter().any(|name| name == "enabled_claude") {
         conn.execute(
             "ALTER TABLE shares ADD COLUMN enabled_claude INTEGER NOT NULL DEFAULT 0",
@@ -3489,7 +3547,7 @@ async fn send_login_code_email(
     email: &str,
     code: &str,
     ttl_secs: i64,
-) -> Result<(), AppError> {
+) -> Result<Option<String>, AppError> {
     let from = config
         .resend_from
         .as_deref()
@@ -3499,17 +3557,17 @@ async fn send_login_code_email(
         (ttl_secs / 60).max(1)
     );
     let mut message =
-        CreateEmailBaseOptions::new(from, [email], "Your portr-rs verification code")
+        CreateEmailBaseOptions::new(from, [email], "Your TokenSwitch verification code")
             .with_html(&html);
     if let Some(reply_to) = config.resend_reply_to.as_deref() {
         message = message.with_reply(reply_to);
     }
-    resend
+    let response = resend
         .emails
         .send(message)
         .await
         .map_err(|e| AppError::Internal(format!("send verification email failed: {e}")))?;
-    Ok(())
+    Ok(Some(response.id.to_string()))
 }
 
 fn enforce_auth_send_limits(

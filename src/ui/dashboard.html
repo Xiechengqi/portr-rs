@@ -543,6 +543,12 @@
         color: var(--muted-foreground);
         background: var(--muted);
       }
+      th:first-child,
+      td:first-child {
+        width: 220px;
+        min-width: 220px;
+        max-width: 220px;
+      }
       tbody tr {
         cursor: pointer;
         transition: background 0.15s;
@@ -551,6 +557,13 @@
       tbody tr:hover { background: rgba(0, 82, 255, 0.025); }
       tbody td:first-child {
         position: relative;
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      tbody td:first-child strong {
+        font-weight: 500;
+        color: var(--muted-foreground);
       }
       tbody td:first-child::before {
         content: "";
@@ -1072,8 +1085,8 @@
       </section>
       <footer class="page-footer">
         <span>Page Online <strong id="page-online-count">0</strong></span>
-        <span class="sep" id="resend-usage-sep" style="display:none">|</span>
-        <span id="resend-usage" style="display:none"></span>
+        <span class="sep">|</span>
+        <span>EMAIL SENT 24H <strong id="email-sent-24h">0</strong></span>
       </footer>
     </main>
 
@@ -1999,18 +2012,7 @@
         if (!res.ok) throw new Error("Failed to update presence: " + res.status);
         const data = await res.json();
         document.getElementById("page-online-count").textContent = String(data.onlineCount ?? 0);
-        const resendUsage = document.getElementById("resend-usage");
-        const resendUsageSep = document.getElementById("resend-usage-sep");
-        const label = String(data.resendUsageLabel || "").trim();
-        if (label) {
-          resendUsage.textContent = `Resend Usage ${label}`;
-          resendUsage.style.display = "";
-          resendUsageSep.style.display = "";
-        } else {
-          resendUsage.textContent = "";
-          resendUsage.style.display = "none";
-          resendUsageSep.style.display = "none";
-        }
+        document.getElementById("email-sent-24h").textContent = String(data.emailSent24h ?? 0);
       }
 
       /* ── Drawer ── */
