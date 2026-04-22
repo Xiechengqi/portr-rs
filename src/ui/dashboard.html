@@ -73,46 +73,193 @@
         color: var(--muted-foreground);
       }
       .topbar-auth {
+        position: relative;
         display: inline-flex;
         align-items: center;
-        gap: 8px;
-        padding: 6px 10px;
+        gap: 10px;
+      }
+      .topbar-auth-trigger,
+      .auth-menu-button,
+      .auth-modal-button {
+        appearance: none;
         border: 1px solid var(--border);
         border-radius: 10px;
         background: var(--card);
+        color: var(--foreground);
+        font: 12px/1.2 "JetBrains Mono", monospace;
+        cursor: pointer;
       }
-      .topbar-auth input {
-        width: 154px;
-        padding: 7px 10px;
+      .topbar-auth-trigger,
+      .auth-menu-button {
+        padding: 9px 14px;
+      }
+      .topbar-auth-trigger {
+        min-width: 92px;
+      }
+      .topbar-auth-trigger:hover,
+      .auth-menu-button:hover,
+      .auth-modal-button:hover {
+        border-color: rgba(0, 82, 255, 0.24);
+      }
+      .auth-menu {
+        position: relative;
+        display: none;
+      }
+      .auth-menu.open {
+        display: inline-flex;
+      }
+      .auth-menu-button {
+        max-width: 260px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .auth-menu-panel {
+        position: absolute;
+        top: calc(100% + 10px);
+        right: 0;
+        min-width: 180px;
+        padding: 8px;
         border: 1px solid var(--border);
-        border-radius: 8px;
+        border-radius: 14px;
+        background: var(--card);
+        box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-4px);
+        transition: opacity 0.16s ease, transform 0.16s ease;
+        z-index: 30;
+      }
+      .auth-menu:hover .auth-menu-panel,
+      .auth-menu:focus-within .auth-menu-panel {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
+      }
+      .auth-menu-email {
+        padding: 8px 10px 10px;
+        font-size: 12px;
+        color: var(--muted-foreground);
+        word-break: break-all;
+      }
+      .auth-menu-panel button {
+        width: 100%;
+        text-align: left;
+      }
+      .auth-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(15, 23, 42, 0.2);
+        backdrop-filter: blur(3px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+        z-index: 120;
+      }
+      .auth-modal-backdrop.open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .auth-modal {
+        width: min(420px, calc(100vw - 32px));
+        padding: 22px;
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        background: var(--card);
+        box-shadow: 0 28px 80px rgba(15, 23, 42, 0.18);
+      }
+      .auth-modal-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+      }
+      .auth-modal-title {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 600;
+      }
+      .auth-modal-subtitle {
+        margin: 8px 0 0;
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--muted-foreground);
+      }
+      .auth-modal-close {
+        appearance: none;
+        border: none;
+        background: var(--muted);
+        color: var(--muted-foreground);
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-size: 18px;
+        flex-shrink: 0;
+      }
+      .auth-modal-close:hover {
+        background: var(--border);
+        color: var(--foreground);
+      }
+      .auth-modal-body {
+        margin-top: 18px;
+        display: grid;
+        gap: 14px;
+      }
+      .auth-modal-label {
+        display: grid;
+        gap: 8px;
+        font: 11px/1 "JetBrains Mono", monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted-foreground);
+      }
+      .auth-modal-input {
+        width: 100%;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
         font: inherit;
         color: var(--foreground);
         background: #fff;
       }
-      .topbar-auth button {
-        padding: 8px 12px;
-        border: 0;
-        border-radius: 8px;
+      .auth-modal-input:focus {
+        outline: none;
+        border-color: rgba(0, 82, 255, 0.4);
+        box-shadow: 0 0 0 4px rgba(0, 82, 255, 0.08);
+      }
+      .auth-modal-button {
+        padding: 11px 16px;
+        border-color: transparent;
         background: var(--accent);
         color: #fff;
-        font: 12px/1.2 "JetBrains Mono", monospace;
-        cursor: pointer;
+        justify-self: start;
       }
-      .topbar-auth button.secondary {
-        background: #0f172a;
-      }
-      .topbar-auth button[disabled] {
+      .auth-modal-button[disabled] {
         opacity: 0.55;
         cursor: not-allowed;
       }
-      .topbar-auth-status {
-        max-width: 220px;
+      .auth-modal-meta {
+        min-height: 18px;
         font-size: 12px;
-        color: var(--foreground);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        color: var(--muted-foreground);
+      }
+      .auth-modal-meta.error {
+        color: #dc2626;
+      }
+      .auth-modal-meta.success {
+        color: #15803d;
+      }
+      .auth-modal-step {
+        display: none;
+      }
+      .auth-modal-step.active {
+        display: grid;
+        gap: 14px;
       }
       .topbar-stat {
         display: inline-flex;
@@ -836,6 +983,7 @@
       @media (max-width: 980px) {
         .topbar { flex-direction: column; align-items: flex-start; }
         .drawer-summary { grid-template-columns: 1fr 1fr; }
+        .topbar-right { width: 100%; }
       }
     </style>
   </head>
@@ -851,11 +999,14 @@
         ><span class="dot"></span>TokenSwitch</a>
         <div class="topbar-right">
           <div class="topbar-auth">
-            <span class="topbar-auth-status" id="auth-status">Anonymous view</span>
-            <input id="auth-email" type="email" placeholder="email@example.com" />
-            <button id="auth-send-code" type="button">Send code</button>
-            <input id="auth-code" type="text" inputmode="numeric" placeholder="123456" />
-            <button class="secondary" id="auth-verify-code" type="button">Verify</button>
+            <button class="topbar-auth-trigger" id="auth-login-button" type="button">Login</button>
+            <div class="auth-menu" id="auth-menu">
+              <button class="auth-menu-button" id="auth-menu-button" type="button"></button>
+              <div class="auth-menu-panel">
+                <div class="auth-menu-email" id="auth-menu-email"></div>
+                <button class="auth-menu-button" id="auth-logout-button" type="button">Logout</button>
+              </div>
+            </div>
           </div>
           <div class="topbar-region">
             <label for="region-select">Router</label>
@@ -940,6 +1091,35 @@
       <div class="drawer-body" id="drawer-body"></div>
     </aside>
 
+    <div class="auth-modal-backdrop" id="auth-modal-backdrop">
+      <div class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+        <div class="auth-modal-top">
+          <div>
+            <h3 class="auth-modal-title" id="auth-modal-title">Share Email Login</h3>
+            <p class="auth-modal-subtitle" id="auth-modal-subtitle">Sign in with email verification code.</p>
+          </div>
+          <button class="auth-modal-close" id="auth-modal-close" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div class="auth-modal-body">
+          <div class="auth-modal-step active" id="auth-email-step">
+            <label class="auth-modal-label" for="auth-email-input">
+              Email
+              <input class="auth-modal-input" id="auth-email-input" type="email" placeholder="email@example.com" />
+            </label>
+            <button class="auth-modal-button" id="auth-send-code" type="button">Send Code</button>
+          </div>
+          <div class="auth-modal-step" id="auth-code-step">
+            <label class="auth-modal-label" for="auth-code-input">
+              Verification Code
+              <input class="auth-modal-input" id="auth-code-input" type="text" inputmode="numeric" placeholder="123456" />
+            </label>
+            <button class="auth-modal-button" id="auth-verify-code" type="button">Verify</button>
+          </div>
+          <div class="auth-modal-meta" id="auth-modal-meta"></div>
+        </div>
+      </div>
+    </div>
+
     <script>
       let _clients = [];
       let _drawerOpen = false;
@@ -948,6 +1128,8 @@
       let _mapPanY = 0;
       let _mapDragState = null;
       let _regions = [];
+      let _authModalStep = "email";
+      let _pendingAuthEmail = "";
       const AUTH_STORAGE_KEY = "portr_dashboard_auth_v1";
       const _pagePresenceSession = (window.crypto && crypto.randomUUID)
         ? crypto.randomUUID()
@@ -1022,21 +1204,155 @@
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(state));
       }
 
+      function mergeAuthState(patch) {
+        const current = readAuthState() || {};
+        const next = { ...current, ...patch };
+        Object.keys(next).forEach((key) => {
+          if (next[key] == null) {
+            delete next[key];
+          }
+        });
+        writeAuthState(next);
+        return next;
+      }
+
+      function bytesToBase64(bytes) {
+        let binary = "";
+        const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        for (let i = 0; i < view.length; i += 1) {
+          binary += String.fromCharCode(view[i]);
+        }
+        return btoa(binary);
+      }
+
+      function base64ToBytes(value) {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+      }
+
+      function dashboardPlatformLabel() {
+        const platform = navigator.userAgentData?.platform || navigator.platform || "Web";
+        return `Dashboard ${platform}`.trim();
+      }
+
+      async function generateInstallationKeys() {
+        if (!window.crypto?.subtle) {
+          throw new Error("Web Crypto is unavailable in this browser");
+        }
+        const keyPair = await crypto.subtle.generateKey(
+          { name: "Ed25519" },
+          true,
+          ["sign", "verify"],
+        );
+        const publicKeyRaw = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+        const privateKeyPkcs8 = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+        return {
+          publicKey: bytesToBase64(publicKeyRaw),
+          privateKey: bytesToBase64(privateKeyPkcs8),
+        };
+      }
+
+      async function importPrivateKey(privateKeyBase64) {
+        return crypto.subtle.importKey(
+          "pkcs8",
+          base64ToBytes(privateKeyBase64),
+          { name: "Ed25519" },
+          false,
+          ["sign"],
+        );
+      }
+
+      async function registerInstallationIdentity(publicKey) {
+        const response = await fetch("/v1/installations/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            publicKey,
+            platform: dashboardPlatformLabel(),
+            appVersion: "dashboard-web",
+            instanceNonce: (window.crypto && crypto.randomUUID)
+              ? crypto.randomUUID()
+              : `instance-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.installationId) {
+          throw new Error(data.message || `installation register failed: HTTP ${response.status}`);
+        }
+        return data.installationId;
+      }
+
+      async function ensureInstallationIdentity() {
+        let state = readAuthState() || {};
+        if (state.installationId && state.publicKey && state.privateKey) {
+          return state;
+        }
+        const keys = await generateInstallationKeys();
+        const installationId = await registerInstallationIdentity(keys.publicKey);
+        state = mergeAuthState({
+          installationId,
+          publicKey: keys.publicKey,
+          privateKey: keys.privateKey,
+        });
+        return state;
+      }
+
+      async function signAuthPayload(action, payload) {
+        const state = await ensureInstallationIdentity();
+        const nonce = (window.crypto && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `nonce-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const timestampMs = Date.now();
+        const privateKey = await importPrivateKey(state.privateKey);
+        const payloadJson = JSON.stringify(payload);
+        const body = `${state.installationId}\n${action}\n${payloadJson}\n${timestampMs}\n${nonce}`;
+        const signatureBuffer = await crypto.subtle.sign(
+          { name: "Ed25519" },
+          privateKey,
+          new TextEncoder().encode(body),
+        );
+        return {
+          installationId: state.installationId,
+          timestampMs,
+          nonce,
+          signature: bytesToBase64(signatureBuffer),
+        };
+      }
+
       function authBearerHeaders() {
         const state = readAuthState();
         return state?.accessToken ? { Authorization: `Bearer ${state.accessToken}` } : {};
       }
 
       function updateAuthUi(status) {
-        const authStatus = document.getElementById("auth-status");
-        const emailInput = document.getElementById("auth-email");
+        const loginButton = document.getElementById("auth-login-button");
+        const menu = document.getElementById("auth-menu");
+        const menuButton = document.getElementById("auth-menu-button");
+        const menuEmail = document.getElementById("auth-menu-email");
         if (status?.authenticated && status?.user?.email) {
-          authStatus.textContent = `Signed in as ${status.user.email}`;
-          emailInput.value = status.user.email;
+          const email = status.user.email;
+          loginButton.style.display = "none";
+          menu.classList.add("open");
+          menuButton.textContent = email;
+          menuEmail.textContent = email;
           return;
         }
         const stored = readAuthState();
-        authStatus.textContent = stored?.email ? `Stored session for ${stored.email}` : "Anonymous view";
+        if (stored?.email) {
+          loginButton.style.display = "none";
+          menu.classList.add("open");
+          menuButton.textContent = stored.email;
+          menuEmail.textContent = stored.email;
+          return;
+        }
+        loginButton.style.display = "";
+        menu.classList.remove("open");
+        menuButton.textContent = "";
+        menuEmail.textContent = "";
       }
 
       async function refreshAccessToken() {
@@ -1045,7 +1361,10 @@
         const res = await fetch("/v1/auth/session/refresh", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refreshToken: state.refreshToken }),
+          body: JSON.stringify({
+            refreshToken: state.refreshToken,
+            installationId: state.installationId,
+          }),
         });
         if (!res.ok) {
           writeAuthState(null);
@@ -1059,6 +1378,7 @@
           refreshToken: data.refreshToken,
           expiresAt: data.expiresAt,
           refreshExpiresAt: data.refreshExpiresAt,
+          installationId: state.installationId,
         });
         return true;
       }
@@ -1078,7 +1398,12 @@
       }
 
       async function ensureSessionStatus() {
-        const response = await authFetch("/v1/auth/session/me");
+        const state = readAuthState();
+        const params = new URLSearchParams();
+        if (state?.installationId) {
+          params.set("installation_id", state.installationId);
+        }
+        const response = await authFetch(`/v1/auth/session/me${params.toString() ? `?${params.toString()}` : ""}`);
         if (!response.ok) {
           updateAuthUi(null);
           return null;
@@ -1438,6 +1763,68 @@
         });
       }
 
+      function authModalElements() {
+        return {
+          backdrop: document.getElementById("auth-modal-backdrop"),
+          subtitle: document.getElementById("auth-modal-subtitle"),
+          meta: document.getElementById("auth-modal-meta"),
+          emailStep: document.getElementById("auth-email-step"),
+          codeStep: document.getElementById("auth-code-step"),
+          emailInput: document.getElementById("auth-email-input"),
+          codeInput: document.getElementById("auth-code-input"),
+          sendCodeButton: document.getElementById("auth-send-code"),
+          verifyButton: document.getElementById("auth-verify-code"),
+        };
+      }
+
+      function setAuthModalMeta(message, tone = "") {
+        const { meta } = authModalElements();
+        meta.textContent = message || "";
+        meta.className = `auth-modal-meta${tone ? ` ${tone}` : ""}`;
+      }
+
+      function setAuthModalStep(step) {
+        const {
+          subtitle,
+          emailStep,
+          codeStep,
+          emailInput,
+          codeInput,
+        } = authModalElements();
+        _authModalStep = step;
+        emailStep.classList.toggle("active", step === "email");
+        codeStep.classList.toggle("active", step === "code");
+        subtitle.textContent = step === "email"
+          ? "Enter your email to receive a verification code."
+          : `Enter the verification code sent to ${_pendingAuthEmail || "your email"}.`;
+        window.setTimeout(() => {
+          if (step === "email") {
+            emailInput.focus();
+          } else {
+            codeInput.focus();
+          }
+        }, 0);
+      }
+
+      function openAuthModal() {
+        const { backdrop, emailInput, codeInput } = authModalElements();
+        const state = readAuthState();
+        if (state?.email && !_pendingAuthEmail) {
+          emailInput.value = state.email;
+        }
+        codeInput.value = "";
+        setAuthModalMeta("");
+        setAuthModalStep("email");
+        backdrop.classList.add("open");
+      }
+
+      function closeAuthModal() {
+        const { backdrop, codeInput } = authModalElements();
+        backdrop.classList.remove("open");
+        codeInput.value = "";
+        setAuthModalMeta("");
+      }
+
       function healthDots(checks) {
         const total = 10;
         if (!checks || checks.length === 0) {
@@ -1727,26 +2114,80 @@
       }
 
       function bindAuthControls() {
-        const emailInput = document.getElementById("auth-email");
-        const codeInput = document.getElementById("auth-code");
-        const sendCodeButton = document.getElementById("auth-send-code");
-        const verifyButton = document.getElementById("auth-verify-code");
+        const {
+          backdrop,
+          emailInput,
+          codeInput,
+          sendCodeButton,
+          verifyButton,
+        } = authModalElements();
+        const loginButton = document.getElementById("auth-login-button");
+        const closeButton = document.getElementById("auth-modal-close");
+        const logoutButton = document.getElementById("auth-logout-button");
+
+        loginButton.addEventListener("click", () => {
+          const stored = readAuthState();
+          emailInput.value = stored?.email || "";
+          openAuthModal();
+        });
+
+        closeButton.addEventListener("click", closeAuthModal);
+        backdrop.addEventListener("click", (event) => {
+          if (event.target === backdrop) {
+            closeAuthModal();
+          }
+        });
+
+        logoutButton.addEventListener("click", async () => {
+          const state = readAuthState() || {};
+          mergeAuthState({
+            installationId: state.installationId || null,
+            publicKey: state.publicKey || null,
+            privateKey: state.privateKey || null,
+            email: null,
+            accessToken: null,
+            refreshToken: null,
+            expiresAt: null,
+            refreshExpiresAt: null,
+          });
+          _pendingAuthEmail = "";
+          updateAuthUi(null);
+          closeAuthModal();
+          await ensureSessionStatus();
+          await boot();
+        });
 
         sendCodeButton.addEventListener("click", async () => {
           const email = emailInput.value.trim().toLowerCase();
           if (!email) return;
           sendCodeButton.disabled = true;
+          setAuthModalMeta("");
           try {
+            const signed = await signAuthPayload("auth_request_code", {
+              email,
+              purpose: "login",
+            });
             const res = await fetch("/v1/auth/email/request-code", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email }),
+              body: JSON.stringify({
+                email,
+                installationId: signed.installationId,
+                timestampMs: signed.timestampMs,
+                nonce: signed.nonce,
+                signature: signed.signature,
+              }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-            alert(`Verification code sent to ${data.maskedDestination || email}`);
+            _pendingAuthEmail = email;
+            setAuthModalStep("code");
+            setAuthModalMeta(
+              `Verification code sent to ${data.maskedDestination || email}`,
+              "success",
+            );
           } catch (error) {
-            alert(String(error.message || error));
+            setAuthModalMeta(String(error.message || error), "error");
           } finally {
             sendCodeButton.disabled = false;
           }
@@ -1757,15 +2198,21 @@
           const code = codeInput.value.trim();
           if (!email || !code) return;
           verifyButton.disabled = true;
+          setAuthModalMeta("");
           try {
+            const identity = await ensureInstallationIdentity();
             const res = await fetch("/v1/auth/email/verify-code", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email, code }),
+              body: JSON.stringify({
+                email,
+                code,
+                installationId: identity.installationId,
+              }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-            writeAuthState({
+            mergeAuthState({
               email: data.user?.email || email,
               accessToken: data.accessToken,
               refreshToken: data.refreshToken,
@@ -1773,12 +2220,20 @@
               refreshExpiresAt: data.refreshExpiresAt,
             });
             codeInput.value = "";
+            _pendingAuthEmail = data.user?.email || email;
             await ensureSessionStatus();
             await boot();
+            closeAuthModal();
           } catch (error) {
-            alert(String(error.message || error));
+            setAuthModalMeta(String(error.message || error), "error");
           } finally {
             verifyButton.disabled = false;
+          }
+        });
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            closeAuthModal();
           }
         });
       }
@@ -1825,6 +2280,7 @@
         }).join("") : `<tr><td colspan="7"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
       }
 
+      ensureInstallationIdentity().catch(console.error);
       bootRegions().catch(console.error);
       bindAuthControls();
       bindRegionSelect();

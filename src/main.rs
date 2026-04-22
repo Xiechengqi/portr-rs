@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
             .await
             {
                 Ok(Some(label)) => info!(resend_daily_usage = %label, "updated resend daily usage"),
-                Ok(None) => {}
+                Ok(None) => info!("resend daily quota header missing, footer hidden"),
                 Err(err) => tracing::warn!("refresh resend usage failed: {err}"),
             }
         }
