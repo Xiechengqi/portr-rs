@@ -1478,8 +1478,8 @@
         const item = client.installation;
         const share = client.share;
 
-        document.getElementById("drawer-title").textContent = share?.description || "";
-        document.getElementById("drawer-meta").textContent = "";
+        document.getElementById("drawer-title").textContent = share?.shareName || "";
+        document.getElementById("drawer-meta").textContent = share?.description || "";
 
         document.getElementById("drawer-summary").innerHTML = `
           <div class="drawer-summary-item">
@@ -1504,27 +1504,8 @@
           </div>`;
 
         const leases = (item.leases || []).slice(0, 3);
-        const pct = share ? usagePercent(share.tokensUsed, share.tokenLimit) : 0;
-        const shareSection = share ? `
-          <div class="drawer-section-label">Share</div>
-          <div class="item-card">
-            <div class="item-card-top">
-              <strong>${escapeHtml(share.shareName)}</strong>
-              ${shareStatusBadge(share)}
-            </div>
-            <div class="item-card-grid">
-              <div class="item-card-grid-cell">Usage<span>${formatUsage(share.tokensUsed, share.tokenLimit)}</span></div>
-              <div class="item-card-grid-cell">Requests<span>${formatNum(share.requestsCount)}</span></div>
-            </div>
-            ${isUnlimitedTokenLimit(share.tokenLimit) ? "" : `<div class="usage-bar usage-bar--full" style="margin-top:10px;width:100%"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>`}
-          </div>
-        ` : `
-          <div class="drawer-section-label">Share</div>
-          <div class="empty"><div class="empty-icon"></div>No share linked to this client</div>
-        `;
         const logs = share?.recentRequests || [];
         document.getElementById("drawer-body").innerHTML = `
-          ${shareSection}
           <div class="drawer-section-label">Request logs</div>
           ${logs.length ? logs.map(log => `
             <div class="item-card">
