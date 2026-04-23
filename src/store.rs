@@ -1339,7 +1339,8 @@ impl AppStore {
                 let online_minutes_24h = online_by_share.get(&share.share_id).copied().unwrap_or(0);
                 let online_rate_24h =
                     ((online_minutes_24h as f64 / ONLINE_WINDOW_MINUTES as f64) * 100.0).min(100.0);
-                let can_view_secret = share_visible_to_email(&share, viewer_email);
+                let can_view_secret =
+                    share.for_sale == "Free" || share_visible_to_email(&share, viewer_email);
                 let can_manage = can_manage_share(&share, viewer_email);
                 ShareView {
                     share_id: share.share_id,
@@ -4854,6 +4855,39 @@ mod tests {
                 .share_status,
             "paused"
         );
+
+        let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
+    async fn dashboard_snapshot_shows_free_share_token_without_login() {
+        let (store, config) = setup_store("dashboard-free-share-token").await;
+        insert_installation(&store, "inst-1").await;
+        insert_share(&store, "inst-1", "share-free", "free-sub", "active").await;
+
+        {
+            let conn = store.conn.lock().await;
+            conn.execute(
+                "UPDATE shares SET for_sale = 'Free', share_token = 'token-free-1234' WHERE share_id = 'share-free'",
+                [],
+            )
+            .expect("mark share as free");
+        }
+
+        let server_geo = ServerGeo {
+            lat: None,
+            lon: None,
+        };
+        let proxy = ProxyRegistry::default();
+        let snapshot = store
+            .dashboard_snapshot(&config, &server_geo, &proxy, None)
+            .await
+            .expect("dashboard snapshot");
+
+        let share = snapshot.clients[0].share.as_ref().expect("share view");
+        assert!(share.can_view_secret);
+        assert_eq!(share.for_sale, "Free");
+        assert_eq!(share.share_token, "token-free-1234");
 
         let _ = std::fs::remove_file(PathBuf::from(config.db_path));
     }
