@@ -23,6 +23,8 @@ use tracing_subscriber::filter::LevelFilter;
 use crate::config::{Config, ensure_default_env_file, load_env_file};
 use crate::store::{AppStore, ShareRouteTarget, fetch_share_runtime_snapshot_from_route};
 
+const APP_NAME: &str = "cc-switch-router";
+
 #[derive(Clone)]
 pub struct ServerState {
     pub config: Config,
@@ -77,7 +79,7 @@ async fn main() -> Result<()> {
         cleanup_interval_secs = config.cleanup_interval_secs,
         lease_retention_secs = config.lease_retention_secs,
         client_stale_secs = config.client_stale_secs,
-        "starting portr-rs"
+        "starting cc-switch-router"
     );
     // 预加载 SSH host key 并计算指纹，提前失败在配置错误；也作为 lease 响应返回给客户端。
     let ssh_host_key = ssh::load_or_generate_host_key(&config.host_key_path)?;
@@ -148,7 +150,7 @@ async fn main() -> Result<()> {
     });
     let probe_task = tokio::spawn(async move {
         let client = reqwest::Client::builder()
-            .user_agent("portr-rs/0.1 route-probe")
+            .user_agent("cc-switch-router/0.1 route-probe")
             .timeout(Duration::from_secs(5))
             .build()?;
 
@@ -166,7 +168,7 @@ async fn main() -> Result<()> {
     });
     let runtime_task = tokio::spawn(async move {
         let client = reqwest::Client::builder()
-            .user_agent("portr-rs/0.1 share-runtime")
+            .user_agent("cc-switch-router/0.1 share-runtime")
             .timeout(Duration::from_secs(5))
             .build()?;
 
@@ -184,7 +186,7 @@ async fn main() -> Result<()> {
     });
     let resend_usage_task = tokio::spawn(async move {
         let client = reqwest::Client::builder()
-            .user_agent("portr-rs/0.1 resend-usage")
+            .user_agent("cc-switch-router/0.1 resend-usage")
             .timeout(Duration::from_secs(10))
             .build()?;
 
@@ -356,8 +358,14 @@ async fn probe_share_route(
     client: &reqwest::Client,
     target: &ShareRouteTarget,
 ) -> bool {
-    let url = format!("{}/_portr/health", config.tunnel_url(&target.subdomain));
-    match client.get(&url).header("X-Portr-Probe", "1").send().await {
+    let url = format!("{}/_share-router/health", config.tunnel_url(&target.subdomain));
+    match client
+        .get(&url)
+        .header("X-Share-Router-Probe", "1")
+        .header("X-Portr-Probe", "1")
+        .send()
+        .await
+    {
         Ok(response) => response.status().is_success(),
         Err(_) => false,
     }
@@ -365,7 +373,7 @@ async fn probe_share_route(
 
 async fn resolve_server_geo() -> ServerGeo {
     let client = match reqwest::Client::builder()
-        .user_agent("portr-rs/0.1")
+        .user_agent("cc-switch-router/0.1")
         .timeout(Duration::from_secs(3))
         .build()
     {
@@ -440,35 +448,38 @@ fn try_handle_cli() -> Result<bool> {
             print_help();
             Ok(true)
         }
-        other => anyhow::bail!("unknown command: {other}\n\nRun `portr-rs help` for usage."),
+        other => anyhow::bail!("unknown command: {other}\n\nRun `{APP_NAME} help` for usage."),
     }
 }
 
 fn print_help() {
     println!(
         "\
-portr-rs
+cc-switch-router
 
 Usage:
-  portr-rs
-  portr-rs help
-  portr-rs --help
-  portr-rs -h
+  cc-switch-router
+  cc-switch-router help
+  cc-switch-router --help
+  cc-switch-router -h
 
 Environment:
-  PORTR_RS_API_ADDR              HTTP listen address, default 0.0.0.0:8787
-  PORTR_RS_SSH_ADDR              SSH listen address, default 0.0.0.0:2222
-  PORTR_RS_TUNNEL_DOMAIN         Public tunnel domain, default 0.0.0.0:8787
-  PORTR_RS_SSH_PUBLIC_ADDR       SSH address sent to clients, default TUNNEL_DOMAIN:SSH_PORT
-  PORTR_RS_USE_LOCALHOST         Use http for localhost-style domains, default true
-  PORTR_RS_LEASE_TTL_SECS        Tunnel lease ttl, default 60
-  PORTR_RS_DB_PATH               SQLite path, default $HOME/.config/portr-rs/portr-rs.db
-  PORTR_RS_CLEANUP_INTERVAL_SECS Cleanup interval, default 300
-  PORTR_RS_LEASE_RETENTION_SECS  Lease retention period, default 604800
-  PORTR_RS_CLIENT_STALE_SECS     Delete clients and shares after no report, default 3600
+  CC_SWITCH_ROUTER_API_ADDR              HTTP listen address, default 0.0.0.0:8787
+  CC_SWITCH_ROUTER_SSH_ADDR              SSH listen address, default 0.0.0.0:2222
+  CC_SWITCH_ROUTER_TUNNEL_DOMAIN         Public tunnel domain, default 0.0.0.0:8787
+  CC_SWITCH_ROUTER_SSH_PUBLIC_ADDR       SSH address sent to clients, default TUNNEL_DOMAIN:SSH_PORT
+  CC_SWITCH_ROUTER_USE_LOCALHOST         Use http for localhost-style domains, default true
+  CC_SWITCH_ROUTER_LEASE_TTL_SECS        Tunnel lease ttl, default 60
+  CC_SWITCH_ROUTER_DB_PATH               SQLite path, default $HOME/.config/cc-switch-router/cc-switch-router.db
+  CC_SWITCH_ROUTER_CLEANUP_INTERVAL_SECS Cleanup interval, default 300
+  CC_SWITCH_ROUTER_LEASE_RETENTION_SECS  Lease retention period, default 604800
+  CC_SWITCH_ROUTER_CLIENT_STALE_SECS     Delete clients and shares after no report, default 3600
+
+Legacy compatibility:
+  `PORTR_RS_*` and `$HOME/.config/portr-rs/.env` are still accepted during migration.
 
 Default env file:
-  $HOME/.config/portr-rs/.env
+  $HOME/.config/cc-switch-router/.env
   The file is auto-created on first start when missing.
 "
     );

@@ -1143,7 +1143,8 @@
       let _regions = [];
       let _authModalStep = "email";
       let _pendingAuthEmail = "";
-      const AUTH_STORAGE_KEY = "portr_dashboard_auth_v1";
+      const AUTH_STORAGE_KEY = "cc_switch_router_dashboard_auth_v1";
+      const LEGACY_AUTH_STORAGE_KEY = "portr_dashboard_auth_v1";
       const _pagePresenceSession = (window.crypto && crypto.randomUUID)
         ? crypto.randomUUID()
         : `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -1202,7 +1203,8 @@
 
       function readAuthState() {
         try {
-          const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+          const raw = localStorage.getItem(AUTH_STORAGE_KEY)
+            || localStorage.getItem(LEGACY_AUTH_STORAGE_KEY);
           return raw ? JSON.parse(raw) : null;
         } catch {
           return null;
@@ -1212,9 +1214,11 @@
       function writeAuthState(state) {
         if (!state) {
           localStorage.removeItem(AUTH_STORAGE_KEY);
+          localStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
           return;
         }
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(state));
+        localStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
       }
 
       function mergeAuthState(patch) {

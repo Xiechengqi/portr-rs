@@ -25,7 +25,7 @@ jobs:
         run: |
           VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "asset=portr-rs-linux-amd64" >> "$GITHUB_OUTPUT"
+          echo "asset=cc-switch-router-linux-amd64" >> "$GITHUB_OUTPUT"
 
       - name: Build release binary
         run: |
@@ -34,14 +34,14 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-files
-          cp target/x86_64-unknown-linux-gnu/release/portr-rs "release-files/${{ steps.version.outputs.asset }}"
+          cp target/x86_64-unknown-linux-gnu/release/cc-switch-router "release-files/${{ steps.version.outputs.asset }}"
           chmod +x "release-files/${{ steps.version.outputs.asset }}"
           ls -lh release-files/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: portr-rs-linux-amd64
+          name: cc-switch-router-linux-amd64
           path: release-files/*
 
   release:
@@ -61,13 +61,13 @@ jobs:
         run: |
           VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "version=v${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "asset=portr-rs-linux-amd64" >> "$GITHUB_OUTPUT"
+          echo "asset=cc-switch-router-linux-amd64" >> "$GITHUB_OUTPUT"
           echo "Current version: v${VERSION}"
 
       - name: Prepare release files
         run: |
           mkdir -p release-files
-          cp "artifacts/portr-rs-linux-amd64/${{ steps.version.outputs.asset }}" release-files/
+          cp "artifacts/cc-switch-router-linux-amd64/${{ steps.version.outputs.asset }}" release-files/
           ls -lh release-files/
 
       - name: Delete existing latest release and tag
@@ -103,7 +103,7 @@ jobs:
             ### Quick download
 
             ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/latest/${{ steps.version.outputs.asset }} -O /usr/local/bin/portr-rs && chmod +x /usr/local/bin/portr-rs
+            wget https://github.com/${{ github.repository }}/releases/download/latest/${{ steps.version.outputs.asset }} -O /usr/local/bin/cc-switch-router && chmod +x /usr/local/bin/cc-switch-router
             ```
           files: release-files/*
           prerelease: false

@@ -1,4 +1,4 @@
-# portr-rs 重构分析与接入控制设计
+# cc-switch-router 重构分析与接入控制设计
 
 ## 1. 当前实现现状
 
@@ -15,7 +15,7 @@
   - `tunnel_url`
   - `secret_key`
 
-### portr server 侧
+### share router 服务端侧
 
 - 连接创建 API 在 [internal/server/admin/api/connection/handlers.go](/data/projects/portr/internal/server/admin/api/connection/handlers.go)。
 - SSH 认证在 [internal/server/ssh/sshd.go](/data/projects/portr/internal/server/ssh/sshd.go)。
@@ -66,9 +66,9 @@
 - 所有接入都必须通过服务端在线签发的短期授权。
 - 即使有人提取到历史请求，也不能长期复用。
 
-## 4. portr-rs 的建议目标
+## 4. cc-switch-router 的建议目标
 
-`portr-rs` 不要照搬 Go 版的 team/user/admin 全量系统，而应该先做一个面向 `cc-switch` 的“受控公共 tunnel service”。
+`cc-switch-router` 不要照搬 Go 版的 team/user/admin 全量系统，而应该先做一个面向 `cc-switch` 的“受控公共 tunnel service”。
 
 建议第一阶段只保留四类能力：
 
@@ -84,40 +84,40 @@ Go 版里的这些能力不建议首批迁移：
 - 通用用户系统
 - 通用 secret key 分发
 
-因为 `cc-switch` 已经是主产品，`portr-rs` 更适合作为它的受控基础设施，而不是通用 SaaS。
+因为 `cc-switch` 已经是主产品，`cc-switch-router` 更适合作为它的受控基础设施，而不是通用 SaaS。
 
 ## 5. 建议的 Rust 目录结构
 
-建议在 `/data/projects/portr-rs` 做成 workspace：
+建议在 `/data/projects/cc-switch-router` 做成 workspace：
 
 ```text
-portr-rs/
+cc-switch-router/
   Cargo.toml
   crates/
-    portr-rs-types/
-    portr-rs-auth/
-    portr-rs-store/
-    portr-rs-api/
-    portr-rs-ssh/
-    portr-rs-proxy/
-    portr-rs-server/
+    cc-switch-router-types/
+    cc-switch-router-auth/
+    cc-switch-router-store/
+    cc-switch-router-api/
+    cc-switch-router-ssh/
+    cc-switch-router-proxy/
+    cc-switch-router-server/
 ```
 
 职责建议：
 
-- `portr-rs-types`
+- `cc-switch-router-types`
   - 公共 DTO、枚举、错误码、配置结构
-- `portr-rs-auth`
+- `cc-switch-router-auth`
   - 安装注册、challenge、JWT/lease、SSH cert 签发
-- `portr-rs-store`
+- `cc-switch-router-store`
   - SQLite/Postgres 抽象
-- `portr-rs-api`
+- `cc-switch-router-api`
   - `axum`/`hyper` API
-- `portr-rs-ssh`
+- `cc-switch-router-ssh`
   - 基于 `russh` 的 reverse forwarding server
-- `portr-rs-proxy`
+- `cc-switch-router-proxy`
   - HTTP/WebSocket/TCP 路由
-- `portr-rs-server`
+- `cc-switch-router-server`
   - 主程序、配置、指标、健康检查、任务调度
 
 ## 6. 认证与授权的建议方案

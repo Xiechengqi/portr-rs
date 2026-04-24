@@ -5,4 +5,4 @@ cd "$(dirname "$0")"
 
 cargo build --release
 
-cp -f -v target/release/portr-rs .
+cp -f -v target/release/cc-switch-router .

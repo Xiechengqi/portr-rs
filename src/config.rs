@@ -5,6 +5,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+const APP_NAME: &str = "cc-switch-router";
+const LEGACY_APP_NAME: &str = "portr-rs";
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub api_addr: SocketAddr,
@@ -36,80 +39,111 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Self {
         Self {
-            api_addr: env::var("PORTR_RS_API_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0:8787".to_string())
+            api_addr: env_var("CC_SWITCH_ROUTER_API_ADDR", "PORTR_RS_API_ADDR")
+                .unwrap_or_else(|| "0.0.0.0:8787".to_string())
                 .parse()
-                .expect("invalid PORTR_RS_API_ADDR"),
-            ssh_addr: env::var("PORTR_RS_SSH_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0:2222".to_string())
+                .expect("invalid CC_SWITCH_ROUTER_API_ADDR/PORTR_RS_API_ADDR"),
+            ssh_addr: env_var("CC_SWITCH_ROUTER_SSH_ADDR", "PORTR_RS_SSH_ADDR")
+                .unwrap_or_else(|| "0.0.0.0:2222".to_string())
                 .parse()
-                .expect("invalid PORTR_RS_SSH_ADDR"),
-            tunnel_domain: env::var("PORTR_RS_TUNNEL_DOMAIN")
-                .unwrap_or_else(|_| "0.0.0.0:8787".to_string()),
-            ssh_public_addr: env::var("PORTR_RS_SSH_PUBLIC_ADDR").unwrap_or_default(),
-            use_localhost: env::var("PORTR_RS_USE_LOCALHOST")
+                .expect("invalid CC_SWITCH_ROUTER_SSH_ADDR/PORTR_RS_SSH_ADDR"),
+            tunnel_domain: env_var("CC_SWITCH_ROUTER_TUNNEL_DOMAIN", "PORTR_RS_TUNNEL_DOMAIN")
+                .unwrap_or_else(|| "0.0.0.0:8787".to_string()),
+            ssh_public_addr: env_var("CC_SWITCH_ROUTER_SSH_PUBLIC_ADDR", "PORTR_RS_SSH_PUBLIC_ADDR")
+                .unwrap_or_default(),
+            use_localhost: env_var("CC_SWITCH_ROUTER_USE_LOCALHOST", "PORTR_RS_USE_LOCALHOST")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(true),
-            lease_ttl_secs: env::var("PORTR_RS_LEASE_TTL_SECS")
-                .ok()
+            lease_ttl_secs: env_var("CC_SWITCH_ROUTER_LEASE_TTL_SECS", "PORTR_RS_LEASE_TTL_SECS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(60),
-            db_path: env::var("PORTR_RS_DB_PATH")
+            db_path: env_var("CC_SWITCH_ROUTER_DB_PATH", "PORTR_RS_DB_PATH")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| default_db_path()),
-            host_key_path: env::var("PORTR_RS_HOST_KEY_PATH")
+                .unwrap_or_else(default_db_path),
+            host_key_path: env_var("CC_SWITCH_ROUTER_HOST_KEY_PATH", "PORTR_RS_HOST_KEY_PATH")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| default_host_key_path()),
-            cleanup_interval_secs: env::var("PORTR_RS_CLEANUP_INTERVAL_SECS")
-                .ok()
+                .unwrap_or_else(default_host_key_path),
+            cleanup_interval_secs: env_var(
+                "CC_SWITCH_ROUTER_CLEANUP_INTERVAL_SECS",
+                "PORTR_RS_CLEANUP_INTERVAL_SECS",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(300),
-            lease_retention_secs: env::var("PORTR_RS_LEASE_RETENTION_SECS")
-                .ok()
+            lease_retention_secs: env_var(
+                "CC_SWITCH_ROUTER_LEASE_RETENTION_SECS",
+                "PORTR_RS_LEASE_RETENTION_SECS",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(7 * 24 * 60 * 60),
-            client_stale_secs: env::var("PORTR_RS_CLIENT_STALE_SECS")
-                .ok()
+            client_stale_secs: env_var(
+                "CC_SWITCH_ROUTER_CLIENT_STALE_SECS",
+                "PORTR_RS_CLIENT_STALE_SECS",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(60 * 60),
-            resend_api_key: env::var("PORTR_RS_RESEND_API_KEY").ok(),
-            resend_from: env::var("PORTR_RS_RESEND_FROM").ok(),
-            resend_reply_to: env::var("PORTR_RS_RESEND_REPLY_TO").ok(),
-            auth_code_ttl_secs: env::var("PORTR_RS_AUTH_CODE_TTL_SECS")
-                .ok()
+            resend_api_key: env_var("CC_SWITCH_ROUTER_RESEND_API_KEY", "PORTR_RS_RESEND_API_KEY"),
+            resend_from: env_var("CC_SWITCH_ROUTER_RESEND_FROM", "PORTR_RS_RESEND_FROM"),
+            resend_reply_to: env_var(
+                "CC_SWITCH_ROUTER_RESEND_REPLY_TO",
+                "PORTR_RS_RESEND_REPLY_TO",
+            ),
+            auth_code_ttl_secs: env_var(
+                "CC_SWITCH_ROUTER_AUTH_CODE_TTL_SECS",
+                "PORTR_RS_AUTH_CODE_TTL_SECS",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5 * 60),
-            auth_code_cooldown_secs: env::var("PORTR_RS_AUTH_CODE_COOLDOWN_SECS")
-                .ok()
+            auth_code_cooldown_secs: env_var(
+                "CC_SWITCH_ROUTER_AUTH_CODE_COOLDOWN_SECS",
+                "PORTR_RS_AUTH_CODE_COOLDOWN_SECS",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(60),
-            auth_session_ttl_secs: env::var("PORTR_RS_AUTH_SESSION_TTL_SECS")
-                .ok()
+            auth_session_ttl_secs: env_var(
+                "CC_SWITCH_ROUTER_AUTH_SESSION_TTL_SECS",
+                "PORTR_RS_AUTH_SESSION_TTL_SECS",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(30 * 60),
-            auth_refresh_ttl_secs: env::var("PORTR_RS_AUTH_REFRESH_TTL_SECS")
-                .ok()
+            auth_refresh_ttl_secs: env_var(
+                "CC_SWITCH_ROUTER_AUTH_REFRESH_TTL_SECS",
+                "PORTR_RS_AUTH_REFRESH_TTL_SECS",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(30 * 24 * 60 * 60),
-            auth_max_verify_attempts: env::var("PORTR_RS_AUTH_MAX_VERIFY_ATTEMPTS")
-                .ok()
+            auth_max_verify_attempts: env_var(
+                "CC_SWITCH_ROUTER_AUTH_MAX_VERIFY_ATTEMPTS",
+                "PORTR_RS_AUTH_MAX_VERIFY_ATTEMPTS",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5),
-            auth_email_hourly_limit: env::var("PORTR_RS_AUTH_EMAIL_HOURLY_LIMIT")
-                .ok()
+            auth_email_hourly_limit: env_var(
+                "CC_SWITCH_ROUTER_AUTH_EMAIL_HOURLY_LIMIT",
+                "PORTR_RS_AUTH_EMAIL_HOURLY_LIMIT",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5),
-            auth_ip_hourly_limit: env::var("PORTR_RS_AUTH_IP_HOURLY_LIMIT")
-                .ok()
+            auth_ip_hourly_limit: env_var(
+                "CC_SWITCH_ROUTER_AUTH_IP_HOURLY_LIMIT",
+                "PORTR_RS_AUTH_IP_HOURLY_LIMIT",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(20),
-            auth_installation_hourly_limit: env::var("PORTR_RS_AUTH_INSTALLATION_HOURLY_LIMIT")
-                .ok()
+            auth_installation_hourly_limit: env_var(
+                "CC_SWITCH_ROUTER_AUTH_INSTALLATION_HOURLY_LIMIT",
+                "PORTR_RS_AUTH_INSTALLATION_HOURLY_LIMIT",
+            )
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10),
-            verification_service_base_url: env::var("PORTR_RS_VERIFICATION_SERVICE_BASE_URL")
-                .unwrap_or_else(|_| "https://tokenswitch.org".to_string()),
-            verification_service_api_key: env::var("PORTR_RS_VERIFICATION_SERVICE_API_KEY").ok(),
+            verification_service_base_url: env_var(
+                "CC_SWITCH_ROUTER_VERIFICATION_SERVICE_BASE_URL",
+                "PORTR_RS_VERIFICATION_SERVICE_BASE_URL",
+            )
+            .unwrap_or_else(|| "https://tokenswitch.org".to_string()),
+            verification_service_api_key: env_var(
+                "CC_SWITCH_ROUTER_VERIFICATION_SERVICE_API_KEY",
+                "PORTR_RS_VERIFICATION_SERVICE_API_KEY",
+            ),
         }
     }
 
@@ -128,14 +162,11 @@ impl Config {
 }
 
 pub fn default_env_path() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".config/portr-rs/.env"))
-        .unwrap_or_else(|| PathBuf::from("./.env"))
+    path_in_home(APP_NAME, ".env").unwrap_or_else(|| PathBuf::from("./.env"))
 }
 
 pub fn ensure_default_env_file() -> Result<PathBuf> {
-    let env_path = default_env_path();
+    let env_path = existing_env_path().unwrap_or_else(default_env_path);
     if let Some(parent) = env_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create env dir failed: {}", parent.display()))?;
@@ -180,40 +211,68 @@ pub fn load_env_file(path: &PathBuf) -> Result<()> {
 }
 
 fn default_db_path() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".config/portr-rs/portr-rs.db"))
-        .unwrap_or_else(|| PathBuf::from("./data/portr-rs.db"))
+    let preferred = path_in_home(APP_NAME, &format!("{APP_NAME}.db"));
+    if let Some(path) = preferred.as_ref().filter(|path| path.exists()).cloned() {
+        return path;
+    }
+    legacy_path_in_home(&format!("{LEGACY_APP_NAME}.db"))
+        .or(preferred)
+        .unwrap_or_else(|| PathBuf::from(format!("./data/{APP_NAME}.db")))
 }
 
 fn default_host_key_path() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".config/portr-rs/ssh_host_ed25519_key"))
+    let preferred = path_in_home(APP_NAME, "ssh_host_ed25519_key");
+    if let Some(path) = preferred.as_ref().filter(|path| path.exists()).cloned() {
+        return path;
+    }
+    legacy_path_in_home("ssh_host_ed25519_key")
+        .or(preferred)
         .unwrap_or_else(|| PathBuf::from("./data/ssh_host_ed25519_key"))
 }
 
 fn default_env_contents() -> String {
     format!(
         "\
-PORTR_RS_API_ADDR=0.0.0.0:8787
-PORTR_RS_SSH_ADDR=0.0.0.0:2222
-PORTR_RS_TUNNEL_DOMAIN=0.0.0.0:8787
-PORTR_RS_USE_LOCALHOST=true
-PORTR_RS_LEASE_TTL_SECS=60
-PORTR_RS_DB_PATH={}
-PORTR_RS_CLEANUP_INTERVAL_SECS=300
-PORTR_RS_LEASE_RETENTION_SECS=604800
-PORTR_RS_CLIENT_STALE_SECS=3600
-PORTR_RS_AUTH_CODE_TTL_SECS=300
-PORTR_RS_AUTH_CODE_COOLDOWN_SECS=60
-PORTR_RS_AUTH_SESSION_TTL_SECS=1800
-PORTR_RS_AUTH_REFRESH_TTL_SECS=2592000
-PORTR_RS_AUTH_MAX_VERIFY_ATTEMPTS=5
-PORTR_RS_AUTH_EMAIL_HOURLY_LIMIT=5
-PORTR_RS_AUTH_IP_HOURLY_LIMIT=20
-PORTR_RS_AUTH_INSTALLATION_HOURLY_LIMIT=10
+CC_SWITCH_ROUTER_API_ADDR=0.0.0.0:8787
+CC_SWITCH_ROUTER_SSH_ADDR=0.0.0.0:2222
+CC_SWITCH_ROUTER_TUNNEL_DOMAIN=0.0.0.0:8787
+CC_SWITCH_ROUTER_USE_LOCALHOST=true
+CC_SWITCH_ROUTER_LEASE_TTL_SECS=60
+CC_SWITCH_ROUTER_DB_PATH={}
+CC_SWITCH_ROUTER_CLEANUP_INTERVAL_SECS=300
+CC_SWITCH_ROUTER_LEASE_RETENTION_SECS=604800
+CC_SWITCH_ROUTER_CLIENT_STALE_SECS=3600
+CC_SWITCH_ROUTER_AUTH_CODE_TTL_SECS=300
+CC_SWITCH_ROUTER_AUTH_CODE_COOLDOWN_SECS=60
+CC_SWITCH_ROUTER_AUTH_SESSION_TTL_SECS=1800
+CC_SWITCH_ROUTER_AUTH_REFRESH_TTL_SECS=2592000
+CC_SWITCH_ROUTER_AUTH_MAX_VERIFY_ATTEMPTS=5
+CC_SWITCH_ROUTER_AUTH_EMAIL_HOURLY_LIMIT=5
+CC_SWITCH_ROUTER_AUTH_IP_HOURLY_LIMIT=20
+CC_SWITCH_ROUTER_AUTH_INSTALLATION_HOURLY_LIMIT=10
 ",
         default_db_path().display()
     )
+}
+
+fn env_var(primary: &str, legacy: &str) -> Option<String> {
+    env::var(primary).ok().or_else(|| env::var(legacy).ok())
+}
+
+fn path_in_home(app_name: &str, leaf: &str) -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".config").join(app_name).join(leaf))
+}
+
+fn legacy_path_in_home(leaf: &str) -> Option<PathBuf> {
+    path_in_home(LEGACY_APP_NAME, leaf).filter(|path| path.exists())
+}
+
+fn existing_env_path() -> Option<PathBuf> {
+    let default_path = default_env_path();
+    if default_path.exists() {
+        return Some(default_path);
+    }
+    legacy_path_in_home(".env")
 }

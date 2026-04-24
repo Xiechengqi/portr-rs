@@ -1485,7 +1485,7 @@ impl AppStore {
         }
 
         let client = reqwest::Client::builder()
-            .user_agent("portr-rs/0.1 share-log-recovery")
+            .user_agent("cc-switch-router/0.1 share-log-recovery")
             .timeout(StdDuration::from_secs(5))
             .build()
             .map_err(|e| {
@@ -1986,7 +1986,7 @@ async fn fetch_share_request_logs_from_route(
     client: &reqwest::Client,
     subdomain: &str,
 ) -> Result<ShareRequestLogFetchResponse, AppError> {
-    let url = format!("{}/_portr/request-logs", config.tunnel_url(subdomain));
+    let url = format!("{}/_share-router/request-logs", config.tunnel_url(subdomain));
     let response = client
         .get(&url)
         .send()
@@ -2011,9 +2011,10 @@ pub async fn fetch_share_runtime_snapshot_from_route(
     client: &reqwest::Client,
     subdomain: &str,
 ) -> Result<ShareRuntimeSnapshotResponse, AppError> {
-    let url = format!("{}/_portr/share-runtime", config.tunnel_url(subdomain));
+    let url = format!("{}/_share-router/share-runtime", config.tunnel_url(subdomain));
     let response = client
         .get(&url)
+        .header("X-Share-Router-Probe", "1")
         .header("X-Portr-Probe", "1")
         .send()
         .await
@@ -3006,7 +3007,7 @@ fn persist_stable_geo(
 async fn lookup_ip_im_geo(ip: &str) -> Option<GeoLookupResult> {
     let url = format!("https://ip.im/{ip}");
     let client = reqwest::Client::builder()
-        .user_agent("portr-rs/0.1")
+        .user_agent("cc-switch-router/0.1")
         .timeout(StdDuration::from_secs(3))
         .build()
         .ok()?;
@@ -4123,7 +4124,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_config(name: &str) -> Config {
-        let db_path = std::env::temp_dir().join(format!("portr-rs-{name}-{}.db", Uuid::new_v4()));
+        let db_path =
+            std::env::temp_dir().join(format!("cc-switch-router-{name}-{}.db", Uuid::new_v4()));
         Config {
             api_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8787),
             ssh_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 2222),
@@ -4133,7 +4135,7 @@ mod tests {
             lease_ttl_secs: 60,
             db_path,
             host_key_path: std::env::temp_dir()
-                .join(format!("portr-rs-{name}-{}.key", Uuid::new_v4())),
+                .join(format!("cc-switch-router-{name}-{}.key", Uuid::new_v4())),
             cleanup_interval_secs: 300,
             lease_retention_secs: 7 * 24 * 60 * 60,
             client_stale_secs: 60 * 60,

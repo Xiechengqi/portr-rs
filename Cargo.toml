@@ -1,5 +1,5 @@
 [package]
-name = "portr-rs"
+name = "cc-switch-router"
 version = "0.1.0"
 edition = "2024"
 

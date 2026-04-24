@@ -144,14 +144,16 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/".to_string());
     let path = parts.uri.path().to_string();
-    let is_internal_portr_path = path.starts_with("/_portr");
-    let is_portr_probe = parts
+    let is_internal_share_router_path =
+        path.starts_with("/_share-router") || path.starts_with("/_portr");
+    let is_share_router_probe = parts
         .headers
-        .get("x-portr-probe")
+        .get("x-share-router-probe")
+        .or_else(|| parts.headers.get("x-portr-probe"))
         .and_then(|value| value.to_str().ok())
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
-        && matches!(path.as_str(), "/_portr/health");
+        && matches!(path.as_str(), "/_share-router/health" | "/_portr/health");
 
     let host_without_port = host.split(':').next().unwrap_or(&host);
     let tunnel_suffix = format!(".{}", state.config.tunnel_domain);
@@ -218,7 +220,7 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         .map(mask_token)
         .unwrap_or_else(|| "-".to_string());
 
-    let share_permit = if is_internal_portr_path {
+    let share_permit = if is_internal_share_router_path {
         None
     } else if route.parallel_limit < 0 {
         None
@@ -312,7 +314,7 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
         response.headers_mut().insert(name, value.clone());
     }
     strip_connection_listed_headers(response.headers_mut());
-    if is_portr_probe {
+    if is_share_router_probe {
         debug!(
             method = %method,
             host = %host,
@@ -341,8 +343,14 @@ fn simple_response(status: StatusCode, reason: &str) -> Response {
     *response.status_mut() = status;
     response
         .headers_mut()
+        .insert("x-share-router-error", HeaderValue::from_static("true"));
+    response
+        .headers_mut()
         .insert("x-portr-error", HeaderValue::from_static("true"));
     if let Ok(value) = HeaderValue::from_str(reason) {
+        response
+            .headers_mut()
+            .insert("x-share-router-error-reason", value.clone());
         response.headers_mut().insert("x-portr-error-reason", value);
     }
     response
