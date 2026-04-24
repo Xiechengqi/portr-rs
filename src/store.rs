@@ -3367,7 +3367,7 @@ fn list_online_minutes_24h(conn: &Connection) -> Result<HashMap<String, usize>, 
         .prepare(
             "SELECT share_id, COUNT(DISTINCT checked_at / 60) AS online_minutes
              FROM share_health_checks
-             WHERE checked_at >= ?1
+             WHERE checked_at >= ?1 AND is_healthy = 1
              GROUP BY share_id",
         )
         .map_err(|e| AppError::Internal(format!("prepare online minutes failed: {e}")))?;
@@ -4239,11 +4239,16 @@ mod tests {
         .expect("insert share");
     }
 
-    async fn insert_health_check(store: &AppStore, share_id: &str, checked_at: i64) {
+    async fn insert_health_check(
+        store: &AppStore,
+        share_id: &str,
+        checked_at: i64,
+        is_healthy: bool,
+    ) {
         let conn = store.conn.lock().await;
         conn.execute(
-            "INSERT INTO share_health_checks (share_id, checked_at, is_healthy) VALUES (?1, ?2, 1)",
-            params![share_id, checked_at],
+            "INSERT INTO share_health_checks (share_id, checked_at, is_healthy) VALUES (?1, ?2, ?3)",
+            params![share_id, checked_at, if is_healthy { 1 } else { 0 }],
         )
         .expect("insert health check");
     }
@@ -4991,7 +4996,7 @@ mod tests {
 
         let now = Utc::now().timestamp();
         for minute_offset in 0..=ONLINE_WINDOW_MINUTES {
-            insert_health_check(&store, "share-1", now - (minute_offset as i64 * 60)).await;
+            insert_health_check(&store, "share-1", now - (minute_offset as i64 * 60), true).await;
         }
 
         let conn = store.conn.lock().await;
@@ -5014,5 +5019,24 @@ mod tests {
         assert_eq!(share.online_rate_24h, 100.0);
 
         let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
+    async fn online_minutes_24h_only_counts_successful_probe_minutes() {
+        let (store, _config) = setup_store("online-minutes-success-only").await;
+        insert_installation(&store, "inst-1").await;
+        insert_share(&store, "inst-1", "share-1", "share-sub", "active").await;
+
+        let now = Utc::now().timestamp();
+        insert_health_check(&store, "share-1", now, true).await;
+        insert_health_check(&store, "share-1", now - 60, false).await;
+        insert_health_check(&store, "share-1", now - 120, false).await;
+        insert_health_check(&store, "share-1", now - 120 + 10, true).await;
+
+        let conn = store.conn.lock().await;
+        let online = list_online_minutes_24h(&conn).expect("list online minutes");
+        drop(conn);
+
+        assert_eq!(online.get("share-1"), Some(&2));
     }
 }

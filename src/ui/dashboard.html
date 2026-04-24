@@ -768,6 +768,10 @@
         background: var(--border);
         transition: background 0.2s;
       }
+      .health-dot--unknown {
+        background: #cbd5e1;
+        box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.12);
+      }
       .health-dot--ok {
         background: #22c55e;
         box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.15);
@@ -1859,7 +1863,7 @@
         const total = 10;
         if (!checks || checks.length === 0) {
           // No route probe data yet — show all gray (unknown state).
-          return `<span class="health-dots">${'<span class="health-dot"></span>'.repeat(total)}</span>`;
+          return `<span class="health-dots">${'<span class="health-dot health-dot--unknown"></span>'.repeat(total)}</span>`;
         }
         const now = Math.floor(Date.now() / 1000);
         const dots = [];
@@ -1867,17 +1871,26 @@
         for (const c of checks) {
           const bucket = Math.floor(c.checkedAt / 60);
           const prev = minuteStatus.get(bucket);
-          minuteStatus.set(bucket, Boolean(prev) || Boolean(c.isHealthy));
+          const next = prev === true ? true : Boolean(c.isHealthy);
+          minuteStatus.set(bucket, next);
         }
         for (let i = total - 1; i >= 0; i--) {
           const bucket = Math.floor((now - i * 60) / 60);
-          const isCurrentBucket = i === 0;
           const healthy = minuteStatus.get(bucket);
-          const hit = healthy === true || isCurrentBucket;
-          const cls = hit ? "health-dot--ok" : "health-dot--fail";
+          const cls =
+            healthy === true
+              ? "health-dot--ok"
+              : healthy === false
+                ? "health-dot--fail"
+                : "health-dot--unknown";
           const bucketDate = new Date(bucket * 60 * 1000);
           const rel = relTimeFromDate(bucketDate);
-          const statusText = healthy === true || isCurrentBucket ? "ok" : "route probe failed";
+          const statusText =
+            healthy === true
+              ? "ok"
+              : healthy === false
+                ? "route probe failed"
+                : "no route probe data";
           dots.push(`<span class="health-dot ${cls}" title="${rel} — ${statusText}"></span>`);
         }
         return `<span class="health-dots">${dots.join("")}</span>`;
@@ -1991,7 +2004,7 @@
         const parallel = share.parallelLimit === -1
           ? `<strong>Unlimited</strong>`
           : `<strong>${escapeHtml(String(share.parallelLimit || 3))}<span class="parallel-shared">shared</span></strong>`;
-        const online = `<strong title="${share.onlineMinutes24h || 0} / 1440 min online in last 24h">${formatPct(share.onlineRate24h || 0)}</strong>`;
+        const online = `<strong title="${share.onlineMinutes24h || 0} / 1440 min with successful route probes in last 24h">${formatPct(share.onlineRate24h || 0)}</strong>`;
         const health = healthDots(share.healthChecks || []);
         return `
           <div class="status-stack">
