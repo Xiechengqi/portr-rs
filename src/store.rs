@@ -1253,6 +1253,15 @@ impl AppStore {
             installations,
             &active_share_subdomains_by_installation,
         );
+        let installation_cleanup_at = installations
+            .iter()
+            .map(|installation| {
+                (
+                    installation.id.clone(),
+                    installation.last_seen_at + Duration::seconds(config.client_stale_secs),
+                )
+            })
+            .collect::<HashMap<_, _>>();
 
         let mut installation_views = Vec::new();
         let mut client_map_points = Vec::new();
@@ -1304,6 +1313,8 @@ impl AppStore {
                     .get(&share.share_id)
                     .cloned()
                     .unwrap_or_default();
+                let is_online =
+                    share.share_status == "active" && active_subdomains.contains(&share.subdomain);
                 let online_minutes_24h = online_by_share.get(&share.share_id).copied().unwrap_or(0);
                 let online_rate_24h =
                     ((online_minutes_24h as f64 / ONLINE_WINDOW_MINUTES as f64) * 100.0).min(100.0);
@@ -1341,7 +1352,11 @@ impl AppStore {
                     support: share.support,
                     upstream_provider: share.upstream_provider,
                     app_runtimes: share.app_runtimes,
-                    installation_id,
+                    installation_id: installation_id.clone(),
+                    is_online,
+                    cleanup_at: (!is_online)
+                        .then(|| installation_cleanup_at.get(&installation_id).copied())
+                        .flatten(),
                     active_requests,
                     online_minutes_24h,
                     online_rate_24h,

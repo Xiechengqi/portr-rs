@@ -659,6 +659,10 @@
         border-radius: 999px;
         background: var(--accent);
       }
+      .badge--offline {
+        background: rgba(239, 68, 68, 0.12);
+        color: #b91c1c;
+      }
       .support-pills {
         display: grid;
         gap: 6px;
@@ -1983,6 +1987,20 @@
 
       function shareStatusStack(share, pct) {
         if (!share) return '<span class="meta">—</span>';
+        if (!share.isOnline) {
+          let offlineTitle = "Offline";
+          if (share.cleanupAt) {
+            const cleanupAt = new Date(share.cleanupAt);
+            const cleanupMs = cleanupAt.getTime();
+            if (!Number.isNaN(cleanupMs)) {
+              const remainingMs = cleanupMs - Date.now();
+              offlineTitle = remainingMs > 0
+                ? `Offline. If this client does not reconnect, share data will be removed ${relTime(share.cleanupAt)}.`
+                : "Offline. Cleanup is pending and will run shortly.";
+            }
+          }
+          return `<span class="badge badge--offline" title="${escapeHtml(offlineTitle)}">Offline</span>`;
+        }
         const usage = `
           <strong>${formatUsage(share.tokensUsed, share.tokenLimit)}</strong>
           ${isUnlimitedTokenLimit(share.tokenLimit) ? "" : `<div class="usage-bar"><div class="${usageBarClass(pct)}" style="width:${pct}%"></div></div>`}
@@ -1996,14 +2014,8 @@
           ? `${inflight} in-flight request${inflight === 1 ? "" : "s"} (unlimited parallel)`
           : `${inflight} in-flight / ${limitLabel} parallel limit`;
         const parallel = `<strong title="${escapeHtml(parallelTitle)}">${inflight}<span class="parallel-shared">/${limitLabel}</span></strong>`;
-        const isActiveShare = share.shareStatus === "active";
-        const reasonLabel = escapeHtml(formatShareStatus(share.shareStatus));
-        const online = isActiveShare
-          ? `<strong title="${share.onlineMinutes24h || 0} / 1440 min with successful route probes in last 24h">${formatPct(share.onlineRate24h || 0)}</strong>`
-          : `<span class="meta" title="Route probes only run while the share is active">—</span>`;
-        const health = isActiveShare
-          ? healthDots(share.healthChecks || [])
-          : `<span class="meta" title="Not probed — share is ${reasonLabel}">${reasonLabel}</span>`;
+        const online = `<strong title="${share.onlineMinutes24h || 0} / 1440 min with successful route probes in last 24h">${formatPct(share.onlineRate24h || 0)}</strong>`;
+        const health = healthDots(share.healthChecks || []);
         return `
           <div class="status-stack">
             <div class="status-line">

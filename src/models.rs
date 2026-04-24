@@ -565,6 +565,9 @@ pub struct ShareView {
     #[serde(default)]
     pub app_runtimes: ShareAppRuntimes,
     pub installation_id: String,
+    pub is_online: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_at: Option<DateTime<Utc>>,
     /// Number of HTTP requests currently in-flight against this share. This is
     /// the same counter the parallel-limit gate increments, so it is directly
     /// comparable to `parallel_limit`.
