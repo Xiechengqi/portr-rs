@@ -1,8 +1,9 @@
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
@@ -145,7 +146,11 @@ impl ProxyRegistry {
     }
 }
 
-pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Response {
+pub async fn proxy_handler(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    req: Request,
+) -> Response {
     let (parts, body) = req.into_parts();
     let method = parts.method.clone();
     let host = parts
@@ -263,6 +268,28 @@ pub async fn proxy_handler(State(state): State<ServerState>, req: Request) -> Re
     } else {
         None
     };
+
+    // Record the request for the dashboard's "demand" overlay and burst-arc animation.
+    // Only honor the Cloudflare country header when the connecting peer is in fact a
+    // Cloudflare edge (or a loopback/private host); otherwise leave country unknown
+    // so spoofed headers cannot taint the visualisation.
+    if let Some(share_id) = route.share_id.as_deref() {
+        let user_country = if crate::cf::is_cloudflare_peer(peer.ip()) {
+            parts
+                .headers
+                .get("cf-ipcountry")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|v| v.len() == 2 && *v != "XX" && *v != "T1")
+                .map(|v| v.to_ascii_uppercase())
+        } else {
+            None
+        };
+        state
+            .recent_traffic
+            .record(share_id.to_string(), user_country)
+            .await;
+    }
 
     let body = match axum::body::to_bytes(body, usize::MAX).await {
         Ok(body) => body,

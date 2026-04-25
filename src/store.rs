@@ -1391,6 +1391,8 @@ impl AppStore {
             },
             clients: client_views,
             country_counts,
+            user_country_counts: HashMap::new(),
+            recent_request_events: Vec::new(),
         })
     }
 

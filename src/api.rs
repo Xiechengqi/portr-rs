@@ -142,17 +142,19 @@ async fn dashboard(
     State(state): State<ServerState>,
     headers: HeaderMap,
 ) -> Result<Json<DashboardResponse>, AppError> {
-    Ok(Json(
-        state
-            .store
-            .dashboard_snapshot(
-                &state.config,
-                &state.server_geo,
-                &state.proxy,
-                extract_session_email(&state, &headers).await?.as_deref(),
-            )
-            .await?,
-    ))
+    let mut response = state
+        .store
+        .dashboard_snapshot(
+            &state.config,
+            &state.server_geo,
+            &state.proxy,
+            extract_session_email(&state, &headers).await?.as_deref(),
+        )
+        .await?;
+    let snapshot = state.recent_traffic.snapshot().await;
+    response.user_country_counts = snapshot.country_counts;
+    response.recent_request_events = snapshot.recent_events;
+    Ok(Json(response))
 }
 
 async fn public_map_points(
@@ -368,29 +370,42 @@ async fn batch_sync_share_request_logs(
 }
 
 fn extract_client_metadata(headers: &HeaderMap, addr: SocketAddr) -> ClientMetadata {
-    let forwarded_ip = headers
-        .get("cf-connecting-ip")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            headers
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.split(',').next())
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-                .map(str::to_string)
-        })
-        .or_else(|| Some(addr.ip().to_string()));
+    // Only honor Cloudflare-spoof-prone headers when the connecting peer is in fact a
+    // Cloudflare edge (or a loopback/private host for dev). Otherwise an attacker
+    // hitting the origin directly could forge `cf-connecting-ip` / `cf-ipcountry`.
+    let cf_trusted = crate::cf::is_cloudflare_peer(addr.ip());
 
-    let country_code = headers
-        .get("cf-ipcountry")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|v| v.len() == 2 && *v != "XX" && *v != "T1")
-        .map(|v| v.to_ascii_uppercase());
+    let forwarded_ip = if cf_trusted {
+        headers
+            .get("cf-connecting-ip")
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                headers
+                    .get("x-forwarded-for")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.split(',').next())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+            })
+            .or_else(|| Some(addr.ip().to_string()))
+    } else {
+        Some(addr.ip().to_string())
+    };
+
+    let country_code = if cf_trusted {
+        headers
+            .get("cf-ipcountry")
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|v| v.len() == 2 && *v != "XX" && *v != "T1")
+            .map(|v| v.to_ascii_uppercase())
+    } else {
+        None
+    };
 
     ClientMetadata {
         ip: forwarded_ip,

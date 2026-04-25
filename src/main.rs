@@ -1,9 +1,11 @@
 mod api;
+mod cf;
 mod config;
 mod error;
 mod geo;
 mod models;
 mod proxy;
+mod recent_traffic;
 mod ssh;
 mod store;
 
@@ -23,6 +25,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 
 use crate::config::{Config, ensure_default_env_file, load_env_file};
+use crate::recent_traffic::RecentTraffic;
 use crate::store::{AppStore, ShareRouteTarget, fetch_share_runtime_snapshot_from_route};
 
 const APP_NAME: &str = "cc-switch-router";
@@ -37,6 +40,9 @@ pub struct ServerState {
     pub resend_usage_cache: Arc<Mutex<Option<ResendUsageCache>>>,
     /// SSH host key 指纹（`SHA256:<base64-nopad>` 格式），在 /lease 响应中回传给客户端。
     pub ssh_host_fingerprint: Option<String>,
+    /// In-memory rolling tracker of proxy traffic by user origin. Drives the dashboard
+    /// "demand" overlay and burst-arc animation; not persisted across restarts.
+    pub recent_traffic: RecentTraffic,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +109,7 @@ async fn main() -> Result<()> {
         resend,
         resend_usage_cache: Arc::new(Mutex::new(None)),
         ssh_host_fingerprint: ssh_host_fingerprint.clone(),
+        recent_traffic: RecentTraffic::new(),
     };
 
     let ssh_server = ssh::SshServer {

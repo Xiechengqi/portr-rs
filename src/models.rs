@@ -471,6 +471,15 @@ pub struct DashboardResponse {
     /// directly (the bundled `world-map.svg` uses alpha-3 as its CSS class names).
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub country_counts: std::collections::HashMap<String, usize>,
+    /// User-origin request counts over the last 5 minutes, keyed by ISO 3166-1 alpha-3.
+    /// Drives the dashboard "demand" pins. Sourced from `cf-ipcountry` on trusted
+    /// Cloudflare peers; spoofed values are dropped at the proxy.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub user_country_counts: std::collections::HashMap<String, usize>,
+    /// Last N proxy request starts in chronological order. The frontend dedupes by
+    /// `request_id` and animates a one-shot burst arc per new event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_request_events: Vec<crate::recent_traffic::RecentRequestEvent>,
 }
 
 #[derive(Debug, Serialize)]
