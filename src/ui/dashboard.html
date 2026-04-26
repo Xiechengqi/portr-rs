@@ -394,49 +394,69 @@
         top: 16px;
         left: 16px;
         z-index: 5;
-        display: inline-flex;
+        display: flex;
         flex-direction: column;
-        gap: 6px;
+        align-items: flex-start;
+        gap: 8px;
         width: fit-content;
         max-width: min(360px, calc(100vw - 32px));
         pointer-events: none;
       }
       .map-ticker:empty { display: none; }
       .map-ticker-row {
-        display: grid;
-        grid-template-columns: auto auto minmax(84px, max-content) minmax(92px, max-content) auto;
-        align-items: start;
-        gap: 8px;
-        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
         width: fit-content;
-        max-width: 100%;
+        max-width: min(360px, calc(100vw - 32px));
+        overflow: hidden;
+        padding: 9px 11px 8px;
         border: 1px solid rgba(226, 232, 240, 0.95);
-        border-radius: 12px;
-        background: rgba(255, 255, 255, 0.92);
-        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.07);
-        backdrop-filter: blur(8px);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.09);
+        backdrop-filter: blur(10px);
         font-size: 12px;
         color: var(--foreground);
         opacity: 0;
-        transform: translateY(6px);
-        transition: opacity 0.28s ease, transform 0.28s ease;
-        max-width: 100%;
+        transform: translateY(16px);
+        max-height: 0;
+        transform-origin: bottom center;
+        transition:
+          opacity 0.34s ease,
+          transform 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+          max-height 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+          margin 0.34s ease,
+          padding 0.34s ease;
       }
       .map-ticker-row.entered {
         opacity: 1;
-        transform: translateY(0);
+        transform: translateY(0) scale(1);
+      }
+      .map-ticker-row.leaving {
+        opacity: 0;
+        transform: translateY(-12px) scale(0.985);
+        padding-top: 0;
+        padding-bottom: 0;
+        margin-top: 0;
+        margin-bottom: 0;
+        border-width: 0;
+      }
+      .map-ticker-row .ticker-headline {
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+        flex-wrap: wrap;
       }
       .map-ticker-row .ticker-flag {
         font-size: 15px;
         line-height: 1.1;
-        padding-top: 1px;
       }
       .map-ticker-row .ticker-country {
         font-weight: 600;
         font-size: 12px;
         letter-spacing: 0.02em;
         line-height: 1.35;
-        padding-top: 1px;
       }
       .map-ticker-row .ticker-subdomain {
         color: var(--muted-foreground);
@@ -453,12 +473,10 @@
         overflow-wrap: anywhere;
         word-break: break-word;
       }
-      .map-ticker-row .ticker-last {
-        color: var(--muted-foreground);
+      .map-ticker-row .ticker-time {
+        color: rgba(100, 116, 139, 0.82);
         font: 10px/1.3 "JetBrains Mono", monospace;
         letter-spacing: 0.02em;
-        white-space: nowrap;
-        padding-top: 2px;
       }
       .map-ticker-row[data-unresolved="1"] .ticker-model {
         color: var(--muted-foreground);
@@ -471,15 +489,7 @@
           left: 12px;
         }
         .map-ticker-row {
-          grid-template-columns: auto auto minmax(0, 1fr) auto;
-        }
-        .map-ticker-row .ticker-model {
-          grid-column: 3;
-        }
-        .map-ticker-row .ticker-last {
-          grid-column: 4;
-          grid-row: 1 / span 2;
-          align-self: start;
+          max-width: calc(100vw - 24px);
         }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -2050,9 +2060,12 @@
       let _requestMetaById = new Map();
       let _latestRequestMetaByShareId = new Map();
       let _requestTickerRows = [];
+      let _requestTickerQueuedEvents = [];
       let _requestTickerClock = null;
+      let _requestTickerInsertTimer = null;
       const REQUEST_TICKER_MAX = 5;
       const REQUEST_TICKER_SEED_WINDOW_MS = 12000;
+      const REQUEST_TICKER_STAGGER_MS = 220;
 
       function countryToFlagEmoji(countryCode) {
         if (!countryCode || !/^[A-Z]{2}$/.test(countryCode)) return "🌐";
@@ -2063,47 +2076,27 @@
         );
       }
 
-      function latestRequestModelForShare(shareId) {
-        const latest = _latestRequestMetaByShareId.get(shareId);
-        if (!latest) return "";
-        return latest.requestModel || latest.model || "";
-      }
-
-      function formatTickerAge(startedAt) {
+      function formatTickerUtcTime(startedAt) {
         const started = Date.parse(startedAt || "");
-        if (!Number.isFinite(started)) return "last now";
-        const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
-        return `last ${seconds}s`;
-      }
-
-      function syncRequestTickerClock() {
-        if (_requestTickerClock) {
-          clearInterval(_requestTickerClock);
-          _requestTickerClock = null;
-        }
-        if (_requestTickerRows.length === 0) return;
-        const tick = () => {
-          for (const item of _requestTickerRows) {
-            const label = item?.row?.querySelector(".ticker-last");
-            if (!label) continue;
-            label.textContent = formatTickerAge(item.startedAt);
-          }
-        };
-        tick();
-        _requestTickerClock = setInterval(tick, 1000);
+        if (!Number.isFinite(started)) return "--:--:-- UTC";
+        const date = new Date(started);
+        const hh = String(date.getUTCHours()).padStart(2, "0");
+        const mm = String(date.getUTCMinutes()).padStart(2, "0");
+        const ss = String(date.getUTCSeconds()).padStart(2, "0");
+        return `${hh}:${mm}:${ss} UTC`;
       }
 
       function requestTickerLabel(event) {
         const shareMeta = _shareMetaById.get(event.shareId) || null;
         const requestMeta = _requestMetaById.get(event.requestId) || null;
-        const subdomain = shareMeta?.subdomain || shareMeta?.shareName || shareMeta?.platform || "share";
-        const modelName = requestMeta?.requestModel || requestMeta?.model || latestRequestModelForShare(event.shareId) || "pending model";
+        const subdomain = event.shareSubdomain || shareMeta?.subdomain || event.shareName || shareMeta?.shareName || shareMeta?.platform || "share";
+        const modelName = requestMeta?.requestModel || requestMeta?.model || "pending";
         return {
           subdomain,
           modelName,
           country: event.userCountry || "--",
           flag: countryToFlagEmoji(event.userCountry),
-          resolved: Boolean(requestMeta?.requestModel || requestMeta?.model || latestRequestModelForShare(event.shareId)),
+          resolved: Boolean(requestMeta?.requestModel || requestMeta?.model),
         };
       }
 
@@ -2113,8 +2106,7 @@
           const requestId = item.row.dataset.requestId;
           if (!requestId) continue;
           const requestMeta = _requestMetaById.get(requestId);
-          const fallbackModel = latestRequestModelForShare(item.row.dataset.shareId || "");
-          const modelName = requestMeta?.requestModel || requestMeta?.model || fallbackModel;
+          const modelName = requestMeta?.requestModel || requestMeta?.model;
           if (!modelName) continue;
           const modelEl = item.row.querySelector(".ticker-model");
           if (modelEl) modelEl.textContent = modelName;
@@ -2122,79 +2114,266 @@
         }
       }
 
-      function pushRequestTicker(event) {
+      function reorderRequestTickerDom() {
         const ticker = document.getElementById("map-ticker");
-        if (!ticker || !event?.requestId) return;
-        const info = requestTickerLabel(event);
-        const row = document.createElement("div");
-        row.className = "map-ticker-row";
-        row.dataset.requestId = event.requestId;
-        row.dataset.shareId = event.shareId || "";
-        if (!info.resolved) row.dataset.unresolved = "1";
-        row.innerHTML = `
-          <span class="ticker-flag">${info.flag}</span>
-          <span class="ticker-country">${escapeHtml(info.country)}</span>
-          <span class="ticker-subdomain">${escapeHtml(info.subdomain)}</span>
-          <span class="ticker-model">${escapeHtml(info.modelName)}</span>
-          <span class="ticker-last">${escapeHtml(formatTickerAge(event.startedAt))}</span>
-        `;
-        ticker.prepend(row);
-        requestAnimationFrame(() => row.classList.add("entered"));
-        _requestTickerRows.unshift({ requestId: event.requestId, row, startedAt: event.startedAt || "", createdAt: Date.now() });
-        while (_requestTickerRows.length > REQUEST_TICKER_MAX) {
-          const stale = _requestTickerRows.pop();
-          if (!stale) break;
-          stale.row.remove();
+        if (!ticker) return;
+        const fragment = document.createDocumentFragment();
+        for (const item of _requestTickerRows) {
+          fragment.appendChild(item.row);
         }
-        syncRequestTickerClock();
+        ticker.replaceChildren(fragment);
       }
 
-      function trimRequestTickerRows() {
-        while (_requestTickerRows.length > REQUEST_TICKER_MAX) {
-          const stale = _requestTickerRows.pop();
-          if (!stale) break;
-          stale.row.remove();
+      function animateRequestTickerLayout(beforeRects) {
+        for (const item of _requestTickerRows) {
+          const before = beforeRects.get(item.requestId);
+          const after = item.row.getBoundingClientRect();
+          if (!before) continue;
+          const deltaY = before.top - after.top;
+          if (Math.abs(deltaY) < 1) continue;
+          item.row.style.transition = "none";
+          item.row.style.transform = `translateY(${deltaY}px)`;
+          void item.row.getBoundingClientRect();
+          item.row.style.transition = "opacity 0.34s ease, transform 0.34s cubic-bezier(0.16, 1, 0.3, 1)";
+          item.row.style.transform = "translateY(0)";
         }
-        syncRequestTickerClock();
+      }
+
+      function captureRequestTickerRects() {
+        const rects = new Map();
+        for (const item of _requestTickerRows) {
+          rects.set(item.requestId, item.row.getBoundingClientRect());
+        }
+        return rects;
+      }
+
+      function measureTickerRowHeight(row) {
+        const previous = row.style.maxHeight;
+        row.style.maxHeight = "none";
+        const height = row.scrollHeight;
+        row.style.maxHeight = previous;
+        return height;
+      }
+
+      function runTickerExit(item) {
+        const row = item?.row;
+        if (!row || row.dataset.exiting === "1") return;
+        row.dataset.exiting = "1";
+        row.style.maxHeight = `${row.scrollHeight}px`;
+        requestAnimationFrame(() => {
+          row.classList.add("leaving");
+          row.style.maxHeight = "0px";
+          row.style.marginTop = "0px";
+        });
+        const remove = () => {
+          row.removeEventListener("transitionend", remove);
+          row.remove();
+        };
+        row.addEventListener("transitionend", remove);
+      }
+
+      function queueTickerInsertAnimation(row) {
+        row.style.maxHeight = "0px";
+        row.style.opacity = "0";
+        row.style.transform = "translateY(18px) scale(0.985)";
+        requestAnimationFrame(() => {
+          row.classList.add("entered");
+          row.style.maxHeight = `${measureTickerRowHeight(row)}px`;
+          row.style.transform = "translateY(0) scale(1)";
+        });
+      }
+
+      function processTickerRowMutations(mutator) {
+        const beforeRects = captureRequestTickerRects();
+        mutator();
+        reorderRequestTickerDom();
+        animateRequestTickerLayout(beforeRects);
+      }
+
+      function drainRequestTickerQueue() {
+        if (_requestTickerInsertTimer || _requestTickerQueuedEvents.length === 0) return;
+        const next = _requestTickerQueuedEvents.shift();
+        if (!next) return;
+        const ticker = document.getElementById("map-ticker");
+        if (!ticker) return;
+        const info = requestTickerLabel(next);
+        const row = document.createElement("div");
+        row.className = "map-ticker-row";
+        row.dataset.requestId = next.requestId;
+        row.dataset.shareId = next.shareId || "";
+        if (!info.resolved) row.dataset.unresolved = "1";
+        row.innerHTML = `
+          <div class="ticker-headline">
+            <span class="ticker-flag">${info.flag}</span>
+            <span class="ticker-country">${escapeHtml(info.country)}</span>
+            <span class="ticker-subdomain">${escapeHtml(info.subdomain)}</span>
+          </div>
+          <div class="ticker-model">${escapeHtml(info.modelName)}</div>
+          <div class="ticker-time">${escapeHtml(formatTickerUtcTime(next.startedAt))}</div>
+        `;
+        processTickerRowMutations(() => {
+          _requestTickerRows.push({ requestId: next.requestId, row, startedAt: next.startedAt || "", createdAt: Date.now() });
+          ticker.appendChild(row);
+        });
+        queueTickerInsertAnimation(row);
+        if (_requestTickerRows.length > REQUEST_TICKER_MAX) {
+          const stale = _requestTickerRows.shift();
+          if (stale) runTickerExit(stale);
+        }
+        _requestTickerInsertTimer = setTimeout(() => {
+          _requestTickerInsertTimer = null;
+          drainRequestTickerQueue();
+        }, REQUEST_TICKER_STAGGER_MS);
+      }
+
+      function queueRequestTickerEvent(event) {
+        _requestTickerQueuedEvents.push(event);
+        drainRequestTickerQueue();
       }
 
       function resetRequestTickerRows() {
+        if (_requestTickerInsertTimer) {
+          clearTimeout(_requestTickerInsertTimer);
+          _requestTickerInsertTimer = null;
+        }
+        _requestTickerQueuedEvents = [];
+        const ticker = document.getElementById("map-ticker");
+        if (ticker) ticker.replaceChildren();
+        _requestTickerRows = [];
         if (_requestTickerClock) {
           clearInterval(_requestTickerClock);
           _requestTickerClock = null;
         }
-        _requestTickerRows = [];
-        const ticker = document.getElementById("map-ticker");
-        if (ticker) ticker.replaceChildren();
       }
 
-      function rebuildRequestTickerIndexes(clients) {
+      function sortTickerRowsNewestLast() {
+        _requestTickerRows.sort((a, b) => Date.parse(a.startedAt || "") - Date.parse(b.startedAt || ""));
+      }
+
+      function removeTickerRowsNotIn(ids) {
+        const keepIds = new Set(ids);
+        const exiting = [];
+        _requestTickerRows = _requestTickerRows.filter((item) => {
+          if (keepIds.has(item.requestId)) return true;
+          exiting.push(item);
+          return false;
+        });
+        for (const item of exiting) runTickerExit(item);
+      }
+
+      function trimTickerRowsToLimit() {
+        while (_requestTickerRows.length > REQUEST_TICKER_MAX) {
+          const stale = _requestTickerRows.shift();
+          if (!stale) break;
+          runTickerExit(stale);
+        }
+      }
+
+      function refreshTickerUtcLabels() {
+        for (const item of _requestTickerRows) {
+          const label = item?.row?.querySelector(".ticker-time");
+          if (!label) continue;
+          label.textContent = formatTickerUtcTime(item.startedAt);
+        }
+      }
+
+      function syncRequestTickerClock() {
+        if (_requestTickerRows.length === 0 && _requestTickerQueuedEvents.length === 0) {
+          if (_requestTickerClock) {
+            clearInterval(_requestTickerClock);
+            _requestTickerClock = null;
+          }
+          return;
+        }
+        refreshTickerUtcLabels();
+        if (_requestTickerClock) return;
+        _requestTickerClock = setInterval(refreshTickerUtcLabels, 1000);
+      }
+
+      function requestTickerKeepIds(events) {
+        return events
+          .slice()
+          .sort((a, b) => Date.parse(a.startedAt || "") - Date.parse(b.startedAt || ""))
+          .slice(-REQUEST_TICKER_MAX)
+          .map((event) => event.requestId);
+      }
+
+      function processTickerEventsForDisplay(events) {
+        const keepIds = requestTickerKeepIds(events);
+        processTickerRowMutations(() => {
+          removeTickerRowsNotIn(keepIds);
+          sortTickerRowsNewestLast();
+        });
+        trimTickerRowsToLimit();
+        syncRequestTickerClock();
+      }
+
+      function requestTickerEventExists(requestId) {
+        return _requestTickerRows.some((item) => item.requestId === requestId)
+          || _requestTickerQueuedEvents.some((item) => item.requestId === requestId);
+      }
+
+      function processRequestEvents(events) {
+        if (!Array.isArray(events) || events.length === 0) {
+          syncRequestTickerClock();
+          return;
+        }
+        const now = Date.now();
+        const nextSeen = new Set();
+        const freshEvents = [];
+        for (const event of events) {
+          if (!event || !event.requestId) continue;
+          const startedAt = Date.parse(event.startedAt || "");
+          if (Number.isFinite(startedAt) && (now - startedAt) > REQUEST_TICKER_SEED_WINDOW_MS) {
+            continue;
+          }
+          nextSeen.add(event.requestId);
+          freshEvents.push(event);
+          if (!requestTickerEventExists(event.requestId)) {
+            queueRequestTickerEvent(event);
+          }
+        }
+        if (freshEvents.length > 0) {
+          processTickerEventsForDisplay(freshEvents);
+        }
+        _seenRequestIds = nextSeen;
+        syncRequestTickerClock();
+      }
+
+      function rebuildRequestTickerIndexes(clients, tickerShares) {
         const shareMetaById = new Map();
         const requestMetaById = new Map();
         const latestRequestMetaByShareId = new Map();
-        for (const client of clients || []) {
-          const share = client?.share;
-          const installation = client?.installation;
-          const shareId = share?.shareId;
-          if (shareId) {
-            shareMetaById.set(shareId, {
-              subdomain: share?.subdomain || "",
-              shareName: share?.shareName || "",
-              installationId: installation?.id || "",
-              platform: installation?.platform || "",
-            });
-          }
+        const tickerShareList = Array.isArray(tickerShares) && tickerShares.length > 0
+          ? tickerShares
+          : (clients || []).map((client) => ({
+            shareId: client?.share?.shareId || "",
+            shareName: client?.share?.shareName || "",
+            subdomain: client?.share?.subdomain || "",
+            recentRequests: client?.share?.recentRequests || [],
+            installationId: client?.installation?.id || "",
+            platform: client?.installation?.platform || "",
+          }));
+        for (const share of tickerShareList) {
+          const shareId = share?.shareId || "";
+          if (!shareId) continue;
+          shareMetaById.set(shareId, {
+            subdomain: share?.subdomain || "",
+            shareName: share?.shareName || "",
+            installationId: share?.installationId || "",
+            platform: share?.platform || "",
+          });
           const recentRequests = Array.isArray(share?.recentRequests) ? share.recentRequests : [];
           for (const req of recentRequests) {
             if (!req?.requestId) continue;
             requestMetaById.set(req.requestId, {
-              shareId: req.shareId || shareId || "",
+              shareId: req.shareId || shareId,
               model: req.model || "",
               requestModel: req.requestModel || "",
               createdAt: req.createdAt || "",
             });
           }
-          if (shareId && recentRequests.length > 0) {
+          if (recentRequests.length > 0) {
             const latest = recentRequests[0];
             latestRequestMetaByShareId.set(shareId, {
               shareId,
@@ -2208,44 +2387,6 @@
         _requestMetaById = requestMetaById;
         _latestRequestMetaByShareId = latestRequestMetaByShareId;
         patchPendingTickerRows();
-      }
-
-      function processRequestEvents(events) {
-        if (!Array.isArray(events) || events.length === 0) return;
-        const now = Date.now();
-        const nextSeen = new Set();
-        const freshEvents = [];
-        for (const event of events) {
-          if (!event || !event.requestId) continue;
-          const startedAt = Date.parse(event.startedAt || "");
-          if (Number.isFinite(startedAt) && (now - startedAt) > REQUEST_TICKER_SEED_WINDOW_MS) {
-            continue;
-          }
-          nextSeen.add(event.requestId);
-          freshEvents.push(event);
-          if (_seenRequestIds.has(event.requestId)) continue;
-          pushRequestTicker(event);
-        }
-        if (freshEvents.length === 0) {
-          resetRequestTickerRows();
-          _seenRequestIds = nextSeen;
-          return;
-        }
-        const keepIds = new Set(freshEvents
-          .slice()
-          .sort((a, b) => Date.parse(b.startedAt || "") - Date.parse(a.startedAt || ""))
-          .slice(0, REQUEST_TICKER_MAX)
-          .map((event) => event.requestId));
-        _requestTickerRows = _requestTickerRows.filter((item) => {
-          if (!keepIds.has(item.requestId)) {
-            item.row.remove();
-            return false;
-          }
-          return true;
-        });
-        _requestTickerRows.sort((a, b) => Date.parse(b.startedAt || "") - Date.parse(a.startedAt || ""));
-        trimRequestTickerRows();
-        _seenRequestIds = nextSeen;
       }
 
       let _pendingHeat = null;
@@ -3181,7 +3322,7 @@
           const id = c?.installation?.id;
           if (id && reqs > 0) clientFlow.set(id, reqs);
         }
-        rebuildRequestTickerIndexes(data.clients || []);
+        rebuildRequestTickerIndexes(data.clients || [], data.tickerShares || []);
         renderMap(data.map || null, clientFlow);
         applyCountryHeatmap(data.countryCounts || {});
         processRequestEvents(data.recentRequestEvents || []);

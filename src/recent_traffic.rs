@@ -30,6 +30,10 @@ const MAX_RETAINED: usize = 4096;
 pub struct RecentRequestEvent {
     pub request_id: String,
     pub share_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_subdomain: Option<String>,
     /// ISO 3166-1 alpha-2 country code of the end user (`cf-ipcountry`).
     /// `None` when the connecting peer was not Cloudflare-trusted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,7 +67,13 @@ impl RecentTraffic {
 
     /// Record a request entering the proxy. Cheap: one write lock + a couple of
     /// VecDeque ops.
-    pub async fn record(&self, share_id: String, user_country_iso2: Option<String>) -> String {
+    pub async fn record(
+        &self,
+        share_id: String,
+        share_name: Option<String>,
+        share_subdomain: Option<String>,
+        user_country_iso2: Option<String>,
+    ) -> String {
         let request_id = Uuid::new_v4().to_string();
         let user_country_iso3 = user_country_iso2
             .as_deref()
@@ -72,6 +82,8 @@ impl RecentTraffic {
         let event = RecentRequestEvent {
             request_id: request_id.clone(),
             share_id,
+            share_name,
+            share_subdomain,
             user_country: user_country_iso2,
             user_country_iso3,
             started_at: Utc::now(),

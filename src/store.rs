@@ -21,7 +21,7 @@ use crate::error::AppError;
 use crate::models::{
     AuthSession, AuthUser, BindInstallationOwnerEmailRequest, BindInstallationOwnerEmailResponse,
     ClientMetadata, DashboardClientView, DashboardMap, DashboardMapPoint, DashboardPresenceRequest,
-    DashboardResponse, DashboardStats, GetInstallationOwnerEmailQuery,
+    DashboardResponse, DashboardStats, DashboardTickerShare, GetInstallationOwnerEmailQuery,
     GetInstallationOwnerEmailResponse, HealthCheckEntry, Installation, InstallationView,
     IssueLeaseRequest, IssueLeaseResponse, LatLonPoint, PublicMapClientPoint,
     PublicMapPointsResponse, RefreshSessionRequest, RegisterInstallationRequest,
@@ -1330,6 +1330,15 @@ impl AppStore {
                 }
             })
             .collect::<Vec<_>>();
+        let ticker_shares = share_views
+            .iter()
+            .map(|share| DashboardTickerShare {
+                share_id: share.share_id.clone(),
+                share_name: share.share_name.clone(),
+                subdomain: share.subdomain.clone(),
+                recent_requests: share.recent_requests.clone(),
+            })
+            .collect::<Vec<_>>();
         let mut share_by_installation = HashMap::<String, ShareView>::new();
         for share in &share_views {
             let installation_id = share.installation_id.clone();
@@ -1387,6 +1396,7 @@ impl AppStore {
                 clients: client_map_points,
             },
             clients: client_views,
+            ticker_shares,
             country_counts,
             user_country_counts: HashMap::new(),
             recent_request_events: Vec::new(),
@@ -4867,6 +4877,7 @@ mod tests {
                 "127.0.0.1:1234".into(),
                 None,
                 None,
+                None,
                 false,
                 -1,
             )
@@ -4875,6 +4886,7 @@ mod tests {
             .set_route(
                 "fresh-sub".into(),
                 "127.0.0.1:5678".into(),
+                None,
                 None,
                 None,
                 false,

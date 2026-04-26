@@ -187,6 +187,7 @@ impl server::Handler for ClientHandler {
                 backend.clone(),
                 share_token,
                 share_id,
+                lease.share.as_ref().map(|s| s.share_name.clone()),
                 is_free_share,
                 parallel_limit,
             )

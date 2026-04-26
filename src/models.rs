@@ -263,6 +263,9 @@ pub struct ShareSyncOperation {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareRequestLogEntry {
+    /// Downstream clients should prefer the proxied `X-CC-Switch-Request-Id` header as
+    /// the request id when present so live dashboard events and synced request logs share
+    /// one identity.
     pub request_id: String,
     pub share_id: String,
     pub share_name: String,
@@ -467,6 +470,8 @@ pub struct DashboardResponse {
     pub stats: DashboardStats,
     pub map: DashboardMap,
     pub clients: Vec<DashboardClientView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ticker_shares: Vec<DashboardTickerShare>,
     /// Active-client count keyed by ISO 3166-1 alpha-3. Drives the SVG country heatmap
     /// directly (the bundled `world-map.svg` uses alpha-3 as its CSS class names).
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
@@ -489,6 +494,16 @@ pub struct DashboardStats {
     pub active_shares: usize,
     /// Total number of HTTP requests currently in-flight across every share.
     pub total_active_requests: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardTickerShare {
+    pub share_id: String,
+    pub share_name: String,
+    pub subdomain: String,
+    #[serde(default)]
+    pub recent_requests: Vec<ShareRequestLogEntry>,
 }
 
 #[derive(Debug, Serialize)]

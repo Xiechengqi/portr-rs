@@ -18,6 +18,8 @@ pub(crate) struct RouteEntry {
     /// None for non-share tunnels.
     share_token: Option<String>,
     share_id: Option<String>,
+    share_name: Option<String>,
+    subdomain: String,
     is_free_share: bool,
     parallel_limit: i64,
 }
@@ -98,15 +100,18 @@ impl ProxyRegistry {
         backend: String,
         share_token: Option<String>,
         share_id: Option<String>,
+        share_name: Option<String>,
         is_free_share: bool,
         parallel_limit: i64,
     ) {
         self.routes.write().await.insert(
-            subdomain,
+            subdomain.clone(),
             RouteEntry {
                 backend,
                 share_token,
                 share_id,
+                share_name,
+                subdomain,
                 is_free_share,
                 parallel_limit,
             },
@@ -338,12 +343,26 @@ pub async fn proxy_handler(
         None
     };
 
-    // Record the request for the dashboard's "demand" overlay and burst-arc animation.
-    if let Some(share_id) = route.share_id.as_deref() {
-        state
-            .recent_traffic
-            .record(share_id.to_string(), client_metadata.country_code.clone())
-            .await;
+    // Record the request for the dashboard's demand/ticker stream and propagate the
+    // generated identity downstream so share clients can write the same request id back
+    // in their request logs.
+    let live_request_id = if let Some(share_id) = route.share_id.as_deref() {
+        Some(
+            state
+                .recent_traffic
+                .record(
+                    share_id.to_string(),
+                    route.share_name.clone(),
+                    Some(route.subdomain.clone()),
+                    client_metadata.country_code.clone(),
+                )
+                .await,
+        )
+    } else {
+        None
+    };
+    if let Some(ref request_id) = live_request_id {
+        builder = builder.header("X-CC-Switch-Request-Id", request_id.as_str());
     }
 
     let upstream = match builder.body(body).send().await {
@@ -540,6 +559,7 @@ mod tests {
                 "127.0.0.1:3000".into(),
                 Some("token-demo".into()),
                 Some("share-1".into()),
+                Some("Demo Share".into()),
                 true,
                 5,
             )
