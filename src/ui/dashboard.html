@@ -2301,7 +2301,9 @@
       function processTickerEventsForDisplay(events) {
         const keepIds = requestTickerKeepIds(events);
         processTickerRowMutations(() => {
-          removeTickerRowsNotIn(keepIds);
+          if (_requestTickerQueuedEvents.length === 0 && !_requestTickerInsertTimer) {
+            removeTickerRowsNotIn(keepIds);
+          }
           sortTickerRowsNewestLast();
         });
         trimTickerRowsToLimit();
