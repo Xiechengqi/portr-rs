@@ -2060,12 +2060,9 @@
       let _requestMetaById = new Map();
       let _latestRequestMetaByShareId = new Map();
       let _requestTickerRows = [];
-      let _requestTickerQueuedEvents = [];
       let _requestTickerClock = null;
-      let _requestTickerInsertTimer = null;
       const REQUEST_TICKER_MAX = 5;
       const REQUEST_TICKER_SEED_WINDOW_MS = 12000;
-      const REQUEST_TICKER_STAGGER_MS = 220;
 
       function countryToFlagEmoji(countryCode) {
         if (!countryCode || !/^[A-Z]{2}$/.test(countryCode)) return "🌐";
@@ -2114,93 +2111,12 @@
         }
       }
 
-      function reorderRequestTickerDom() {
-        const ticker = document.getElementById("map-ticker");
-        if (!ticker) return;
-        const fragment = document.createDocumentFragment();
-        for (const item of _requestTickerRows) {
-          fragment.appendChild(item.row);
-        }
-        ticker.replaceChildren(fragment);
-      }
-
-      function animateRequestTickerLayout(beforeRects) {
-        for (const item of _requestTickerRows) {
-          const before = beforeRects.get(item.requestId);
-          const after = item.row.getBoundingClientRect();
-          if (!before) continue;
-          const deltaY = before.top - after.top;
-          if (Math.abs(deltaY) < 1) continue;
-          item.row.style.transition = "none";
-          item.row.style.transform = `translateY(${deltaY}px)`;
-          void item.row.getBoundingClientRect();
-          item.row.style.transition = "opacity 0.34s ease, transform 0.34s cubic-bezier(0.16, 1, 0.3, 1)";
-          item.row.style.transform = "translateY(0)";
-        }
-      }
-
-      function captureRequestTickerRects() {
-        const rects = new Map();
-        for (const item of _requestTickerRows) {
-          rects.set(item.requestId, item.row.getBoundingClientRect());
-        }
-        return rects;
-      }
-
-      function measureTickerRowHeight(row) {
-        const previous = row.style.maxHeight;
-        row.style.maxHeight = "none";
-        const height = row.scrollHeight;
-        row.style.maxHeight = previous;
-        return height;
-      }
-
-      function runTickerExit(item) {
-        const row = item?.row;
-        if (!row || row.dataset.exiting === "1") return;
-        row.dataset.exiting = "1";
-        row.style.maxHeight = `${row.scrollHeight}px`;
-        requestAnimationFrame(() => {
-          row.classList.add("leaving");
-          row.style.maxHeight = "0px";
-          row.style.marginTop = "0px";
-        });
-        const remove = () => {
-          row.removeEventListener("transitionend", remove);
-          row.remove();
-        };
-        row.addEventListener("transitionend", remove);
-      }
-
-      function queueTickerInsertAnimation(row) {
-        row.style.maxHeight = "0px";
-        row.style.opacity = "0";
-        row.style.transform = "translateY(18px) scale(0.985)";
-        requestAnimationFrame(() => {
-          row.classList.add("entered");
-          row.style.maxHeight = `${measureTickerRowHeight(row)}px`;
-          row.style.transform = "translateY(0) scale(1)";
-        });
-      }
-
-      function processTickerRowMutations(mutator) {
-        const beforeRects = captureRequestTickerRects();
-        mutator();
-        reorderRequestTickerDom();
-        animateRequestTickerLayout(beforeRects);
-      }
-
-      function drainRequestTickerQueue() {
-        if (_requestTickerInsertTimer || _requestTickerQueuedEvents.length === 0) return;
-        const next = _requestTickerQueuedEvents.shift();
-        if (!next) return;
-        const ticker = document.getElementById("map-ticker");
-        if (!ticker) return;
-        const info = requestTickerLabel(next);
+      function buildTickerRow(event) {
+        const info = requestTickerLabel(event);
         const row = document.createElement("div");
         row.className = "map-ticker-row";
-        row.dataset.requestId = next.requestId;
-        row.dataset.shareId = next.shareId || "";
+        row.dataset.requestId = event.requestId;
+        row.dataset.shareId = event.shareId || "";
         if (!info.resolved) row.dataset.unresolved = "1";
         row.innerHTML = `
           <div class="ticker-headline">
@@ -2209,63 +2125,42 @@
             <span class="ticker-subdomain">${escapeHtml(info.subdomain)}</span>
           </div>
           <div class="ticker-model">${escapeHtml(info.modelName)}</div>
-          <div class="ticker-time">${escapeHtml(formatTickerUtcTime(next.startedAt))}</div>
+          <div class="ticker-time">${escapeHtml(formatTickerUtcTime(event.startedAt))}</div>
         `;
-        processTickerRowMutations(() => {
-          _requestTickerRows.push({ requestId: next.requestId, row, startedAt: next.startedAt || "", createdAt: Date.now() });
-          ticker.appendChild(row);
-        });
-        queueTickerInsertAnimation(row);
-        if (_requestTickerRows.length > REQUEST_TICKER_MAX) {
-          const stale = _requestTickerRows.shift();
-          if (stale) runTickerExit(stale);
-        }
-        _requestTickerInsertTimer = setTimeout(() => {
-          _requestTickerInsertTimer = null;
-          drainRequestTickerQueue();
-        }, REQUEST_TICKER_STAGGER_MS);
+        return row;
       }
 
-      function queueRequestTickerEvent(event) {
-        _requestTickerQueuedEvents.push(event);
-        drainRequestTickerQueue();
+      function pushRequestTicker(event) {
+        const ticker = document.getElementById("map-ticker");
+        if (!ticker || !event?.requestId) {
+          console.debug("[ticker] skip push", { hasTicker: Boolean(ticker), requestId: event?.requestId || null, event });
+          return;
+        }
+        const row = buildTickerRow(event);
+        ticker.appendChild(row);
+        requestAnimationFrame(() => row.classList.add("entered"));
+        _requestTickerRows.push({ requestId: event.requestId, row, startedAt: event.startedAt || "", createdAt: Date.now() });
+        while (_requestTickerRows.length > REQUEST_TICKER_MAX) {
+          const stale = _requestTickerRows.shift();
+          if (!stale) break;
+          stale.row.remove();
+        }
+        console.debug("[ticker] pushed", {
+          requestId: event.requestId,
+          shareId: event.shareId,
+          shareSubdomain: event.shareSubdomain || null,
+          rows: _requestTickerRows.length,
+          domChildren: ticker.childElementCount,
+        });
       }
 
       function resetRequestTickerRows() {
-        if (_requestTickerInsertTimer) {
-          clearTimeout(_requestTickerInsertTimer);
-          _requestTickerInsertTimer = null;
-        }
-        _requestTickerQueuedEvents = [];
         const ticker = document.getElementById("map-ticker");
         if (ticker) ticker.replaceChildren();
         _requestTickerRows = [];
         if (_requestTickerClock) {
           clearInterval(_requestTickerClock);
           _requestTickerClock = null;
-        }
-      }
-
-      function sortTickerRowsNewestLast() {
-        _requestTickerRows.sort((a, b) => Date.parse(a.startedAt || "") - Date.parse(b.startedAt || ""));
-      }
-
-      function removeTickerRowsNotIn(ids) {
-        const keepIds = new Set(ids);
-        const exiting = [];
-        _requestTickerRows = _requestTickerRows.filter((item) => {
-          if (keepIds.has(item.requestId)) return true;
-          exiting.push(item);
-          return false;
-        });
-        for (const item of exiting) runTickerExit(item);
-      }
-
-      function trimTickerRowsToLimit() {
-        while (_requestTickerRows.length > REQUEST_TICKER_MAX) {
-          const stale = _requestTickerRows.shift();
-          if (!stale) break;
-          runTickerExit(stale);
         }
       }
 
@@ -2278,7 +2173,7 @@
       }
 
       function syncRequestTickerClock() {
-        if (_requestTickerRows.length === 0 && _requestTickerQueuedEvents.length === 0) {
+        if (_requestTickerRows.length === 0) {
           if (_requestTickerClock) {
             clearInterval(_requestTickerClock);
             _requestTickerClock = null;
@@ -2290,39 +2185,20 @@
         _requestTickerClock = setInterval(refreshTickerUtcLabels, 1000);
       }
 
-      function requestTickerKeepIds(events) {
-        return events
-          .slice()
-          .sort((a, b) => Date.parse(a.startedAt || "") - Date.parse(b.startedAt || ""))
-          .slice(-REQUEST_TICKER_MAX)
-          .map((event) => event.requestId);
-      }
-
-      function processTickerEventsForDisplay(events) {
-        const keepIds = requestTickerKeepIds(events);
-        processTickerRowMutations(() => {
-          if (_requestTickerQueuedEvents.length === 0 && !_requestTickerInsertTimer) {
-            removeTickerRowsNotIn(keepIds);
-          }
-          sortTickerRowsNewestLast();
-        });
-        trimTickerRowsToLimit();
-        syncRequestTickerClock();
-      }
-
       function requestTickerEventExists(requestId) {
-        return _requestTickerRows.some((item) => item.requestId === requestId)
-          || _requestTickerQueuedEvents.some((item) => item.requestId === requestId);
+        return _requestTickerRows.some((item) => item.requestId === requestId);
       }
 
       function processRequestEvents(events) {
         if (!Array.isArray(events) || events.length === 0) {
+          console.debug("[ticker] no events in payload");
           syncRequestTickerClock();
           return;
         }
         const now = Date.now();
         const nextSeen = new Set();
         const freshEvents = [];
+        console.debug("[ticker] process payload", { totalEvents: events.length, seenCount: _seenRequestIds.size });
         for (const event of events) {
           if (!event || !event.requestId) continue;
           const startedAt = Date.parse(event.startedAt || "");
@@ -2331,13 +2207,22 @@
           }
           nextSeen.add(event.requestId);
           freshEvents.push(event);
-          if (!requestTickerEventExists(event.requestId)) {
-            queueRequestTickerEvent(event);
+          if (!_seenRequestIds.has(event.requestId) && !requestTickerEventExists(event.requestId)) {
+            pushRequestTicker(event);
           }
         }
-        if (freshEvents.length > 0) {
-          processTickerEventsForDisplay(freshEvents);
-        }
+        const keepIds = new Set(freshEvents
+          .slice()
+          .sort((a, b) => Date.parse(a.startedAt || "") - Date.parse(b.startedAt || ""))
+          .slice(-REQUEST_TICKER_MAX)
+          .map((event) => event.requestId));
+        _requestTickerRows = _requestTickerRows.filter((item) => {
+          if (!keepIds.has(item.requestId)) {
+            item.row.remove();
+            return false;
+          }
+          return true;
+        });
         _seenRequestIds = nextSeen;
         syncRequestTickerClock();
       }
@@ -3325,6 +3210,11 @@
           if (id && reqs > 0) clientFlow.set(id, reqs);
         }
         rebuildRequestTickerIndexes(data.clients || [], data.tickerShares || []);
+        console.debug("[ticker] dashboard fetch", {
+          recentRequestEvents: Array.isArray(data.recentRequestEvents) ? data.recentRequestEvents.length : null,
+          tickerShares: Array.isArray(data.tickerShares) ? data.tickerShares.length : null,
+          hasTickerEl: Boolean(document.getElementById("map-ticker")),
+        });
         renderMap(data.map || null, clientFlow);
         applyCountryHeatmap(data.countryCounts || {});
         processRequestEvents(data.recentRequestEvents || []);
