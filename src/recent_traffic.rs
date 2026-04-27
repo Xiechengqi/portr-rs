@@ -3,8 +3,9 @@
 //! Two views are exposed via [`RecentTraffic::snapshot`]:
 //! - **`country_counts`** — ISO 3166-1 alpha-3 → request count over the last
 //!   [`COUNTRY_WINDOW`]. Drives the dashboard's "demand" overlay.
-//! - **`recent_events`** — last [`MAX_EVENTS`] request starts. Drives the burst-arc
-//!   animation; the frontend dedupes by `request_id`.
+//! - **`recent_events`** — very fresh request-start events over the last
+//!   [`TICKER_WINDOW_SECS`] seconds. Drives the dashboard ticker; the frontend dedupes
+//!   by `request_id`.
 //!
 //! No persistence — the tracker lives inside `ServerState` and resets on restart.
 
@@ -20,6 +21,8 @@ use crate::geo::iso2_to_iso3;
 
 /// Sliding window for country count aggregation.
 const COUNTRY_WINDOW_SECS: i64 = 5 * 60;
+/// Freshness window for dashboard ticker request events.
+const TICKER_WINDOW_SECS: i64 = 4;
 /// Maximum number of events held in the ring buffer.
 const MAX_EVENTS: usize = 64;
 /// Hard cap on retained event records — protects memory under sustained spikes.
@@ -101,10 +104,11 @@ impl RecentTraffic {
     /// pick the latest events; also drops anything older than the window so the
     /// buffer cannot grow without bound under quiet periods.
     pub async fn snapshot(&self) -> RecentTrafficSnapshot {
-        let cutoff = Utc::now() - Duration::seconds(COUNTRY_WINDOW_SECS);
+        let country_cutoff = Utc::now() - Duration::seconds(COUNTRY_WINDOW_SECS);
+        let ticker_cutoff = Utc::now() - Duration::seconds(TICKER_WINDOW_SECS);
         let mut state = self.inner.write().await;
         while let Some(front) = state.events.front() {
-            if front.started_at < cutoff {
+            if front.started_at < country_cutoff {
                 state.events.pop_front();
             } else {
                 break;
@@ -116,9 +120,14 @@ impl RecentTraffic {
                 *country_counts.entry(iso3.to_string()).or_insert(0) += 1;
             }
         }
-        // Last MAX_EVENTS only; ring already chronologically ordered.
-        let take_from = state.events.len().saturating_sub(MAX_EVENTS);
-        let recent_events: Vec<_> = state.events.iter().skip(take_from).cloned().collect();
+        let recent_events: Vec<_> = state
+            .events
+            .iter()
+            .filter(|event| event.started_at >= ticker_cutoff)
+            .cloned()
+            .collect();
+        let take_from = recent_events.len().saturating_sub(MAX_EVENTS);
+        let recent_events = recent_events.into_iter().skip(take_from).collect();
         RecentTrafficSnapshot {
             country_counts,
             recent_events,
