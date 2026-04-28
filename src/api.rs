@@ -15,10 +15,11 @@ use crate::models::{
     GetInstallationOwnerEmailQuery, GetInstallationOwnerEmailResponse, HealthResponse,
     IssueLeaseRequest, IssueLeaseResponse, MarketShareView, MarketsResponse,
     PublicMapPointsResponse, RefreshSessionRequest, RegisterInstallationRequest,
-    RegisterInstallationResponse, RequestEmailCodeRequest, RequestEmailCodeResponse,
-    SessionStatusResponse, ShareBatchSyncRequest, ShareClaimSubdomainRequest, ShareDeleteRequest,
-    ShareHeartbeatRequest, ShareRequestLogBatchSyncRequest, ShareSyncRequest,
-    VerifyEmailCodeRequest, VerifyEmailCodeResponse,
+    RegisterInstallationResponse, RegisterMarketRequest, RequestEmailCodeRequest,
+    RequestEmailCodeResponse, SessionStatusResponse, ShareBatchSyncRequest,
+    ShareClaimSubdomainRequest, ShareDeleteRequest, ShareHeartbeatRequest,
+    ShareRequestLogBatchSyncRequest, ShareSyncRequest, VerifyEmailCodeRequest,
+    VerifyEmailCodeResponse,
 };
 use crate::proxy::{market_proxy_handler, proxy_handler};
 
@@ -45,6 +46,7 @@ pub fn router(state: ServerState) -> Router {
         .route("/v1/healthz", get(health))
         .route("/v1/dashboard", get(dashboard))
         .route("/v1/markets", get(markets))
+        .route("/v1/markets/register", post(register_market))
         .route("/v1/market/shares", get(market_shares))
         .route("/v1/markets/tunnel/lease", post(issue_market_lease))
         .route("/v1/public/map-points", get(public_map_points))
@@ -86,17 +88,26 @@ async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { ok: true })
 }
 
-async fn markets(State(state): State<ServerState>) -> Json<MarketsResponse> {
-    Json(MarketsResponse {
-        markets: state.config.public_markets(),
-    })
+async fn markets(State(state): State<ServerState>) -> Result<Json<MarketsResponse>, AppError> {
+    Ok(Json(MarketsResponse {
+        markets: state.store.list_public_markets().await?,
+    }))
+}
+
+async fn register_market(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Json(input): Json<RegisterMarketRequest>,
+) -> Result<Json<crate::models::PublicMarketConfig>, AppError> {
+    let email = require_session_email(&state, &headers).await?;
+    Ok(Json(state.store.register_market(&email, input).await?))
 }
 
 async fn market_shares(
     State(state): State<ServerState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<MarketShareView>>, AppError> {
-    let market = authenticate_market(&state, &headers, "market:shares:read")?;
+    let market = authenticate_market(&state, &headers, "market:shares:read").await?;
     let active_subdomains = state.proxy.active_subdomains().await.into_iter().collect();
     let inflight_by_share = state.proxy.inflight_by_share().await;
     let shares = state
@@ -115,10 +126,10 @@ async fn issue_market_lease(
     State(state): State<ServerState>,
     headers: HeaderMap,
 ) -> Result<Json<IssueLeaseResponse>, AppError> {
-    let market = authenticate_market(&state, &headers, "market:proxy:use")?;
+    let market = authenticate_market(&state, &headers, "market:proxy:use").await?;
     let mut response = state
         .store
-        .issue_market_lease(&state.config, &state.proxy, market)
+        .issue_market_lease(&state.config, &state.proxy, &market)
         .await?;
     response.ssh_host_fingerprint = state.ssh_host_fingerprint.clone();
     Ok(Json(response))
@@ -432,17 +443,17 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-fn authenticate_market<'a>(
-    state: &'a ServerState,
+async fn authenticate_market(
+    state: &ServerState,
     headers: &HeaderMap,
     required_scope: &str,
-) -> Result<&'a crate::config::MarketConfig, AppError> {
+) -> Result<crate::models::MarketRegistryRecord, AppError> {
     let token = extract_bearer_token(headers)
-        .ok_or_else(|| AppError::Unauthorized("missing market bearer token".into()))?;
+        .ok_or_else(|| AppError::Unauthorized("missing market session bearer token".into()))?;
     state
-        .config
-        .market_by_token(token, required_scope)
-        .ok_or_else(|| AppError::Unauthorized("invalid market bearer token".into()))
+        .store
+        .authenticate_market_session(token, required_scope)
+        .await
 }
 
 async fn extract_session_email(

@@ -224,8 +224,16 @@ pub async fn market_proxy_handler(
     let Some(token) = bearer_token(&parts.headers) else {
         return simple_response(StatusCode::UNAUTHORIZED, "missing-market-bearer-token");
     };
-    let Some(market) = state.config.market_by_token(token, "market:proxy:use") else {
-        return simple_response(StatusCode::UNAUTHORIZED, "invalid-market-bearer-token");
+    let market = match state
+        .store
+        .authenticate_market_session(token, "market:proxy:use")
+        .await
+    {
+        Ok(market) => market,
+        Err(err) => {
+            warn!(error = %err, "market proxy authentication failed");
+            return simple_response(StatusCode::UNAUTHORIZED, "invalid-market-session");
+        }
     };
     let market_email = market.email.clone();
     let market_subdomain = market.subdomain.clone();

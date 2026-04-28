@@ -332,7 +332,43 @@ pub struct PublicMapPointsResponse {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketsResponse {
-    pub markets: Vec<crate::config::PublicMarketConfig>,
+    pub markets: Vec<PublicMarketConfig>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicMarketConfig {
+    pub id: String,
+    pub display_name: String,
+    pub email: String,
+    pub subdomain: String,
+    pub public_base_url: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MarketRegistryRecord {
+    pub id: String,
+    pub display_name: String,
+    pub email: String,
+    pub subdomain: String,
+    pub public_base_url: String,
+    pub scopes: Vec<String>,
+    pub status: String,
+}
+
+impl MarketRegistryRecord {
+    pub fn has_scope(&self, scope: &str) -> bool {
+        self.status.eq_ignore_ascii_case("active") && self.scopes.iter().any(|value| value == scope)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterMarketRequest {
+    pub subdomain: String,
+    pub display_name: String,
+    pub public_base_url: String,
 }
 
 #[derive(Debug, Serialize)]

@@ -16,7 +16,7 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::ServerGeo;
-use crate::config::{Config, MarketConfig};
+use crate::config::Config;
 use crate::error::AppError;
 use crate::models::{
     AuthSession, AuthUser, BindInstallationOwnerEmailRequest, BindInstallationOwnerEmailResponse,
@@ -24,8 +24,9 @@ use crate::models::{
     DashboardPresenceRequest, DashboardResponse, DashboardStats, DashboardTickerShare,
     GetInstallationOwnerEmailQuery, GetInstallationOwnerEmailResponse, HealthCheckEntry,
     Installation, InstallationView, IssueLeaseRequest, IssueLeaseResponse, LatLonPoint,
-    MarketShareView, PublicMapClientPoint, PublicMapPointsResponse, RefreshSessionRequest,
-    RegisterInstallationRequest, RegisterInstallationResponse, RequestEmailCodeRequest,
+    MarketRegistryRecord, MarketShareView, PublicMapClientPoint, PublicMapPointsResponse,
+    PublicMarketConfig, RefreshSessionRequest, RegisterInstallationRequest,
+    RegisterInstallationResponse, RegisterMarketRequest, RequestEmailCodeRequest,
     RequestEmailCodeResponse, SessionStatusResponse, ShareAppRuntimes, ShareBatchSyncRequest,
     ShareClaimSubdomainRequest, ShareDeleteRequest, ShareDescriptor, ShareHeartbeatRequest,
     ShareRequestLogBatchSyncRequest, ShareRequestLogEntry, ShareRequestLogFetchResponse,
@@ -39,8 +40,11 @@ const PUBLIC_MAP_CLIENT_ACTIVE_WINDOW_MINUTES: i64 = 5;
 const ONLINE_WINDOW_MINUTES: usize = 24 * 60;
 const SIGNED_REQUEST_MAX_SKEW_MS: i64 = 60_000;
 const NONCE_RETENTION_SECS: i64 = 10 * 60;
+const MARKET_OFFLINE_GRACE_SECS: i64 = 24 * 60 * 60;
+const MARKET_ACTIVE_MISSING_GRACE_SECS: i64 = 5 * 60;
 const AUTH_CODE_DIGITS: usize = 6;
 const AUTH_PURPOSE_LOGIN: &str = "login";
+const MARKET_DEFAULT_SCOPES: &[&str] = &["market:shares:read", "market:proxy:use"];
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -735,6 +739,7 @@ impl AppStore {
         ensure_subdomain_allowed(&requested_subdomain, config)?;
         let subdomain = if let Some(share) = input.share.as_ref() {
             let conn = self.conn.lock().await;
+            ensure_subdomain_not_registered_market(&conn, &requested_subdomain)?;
             let owned_subdomain =
                 get_share_owned_subdomain(&conn, &input.installation_id, &share.share_id)?
                     .ok_or_else(|| AppError::Conflict("share subdomain is not claimed".into()))?;
@@ -745,6 +750,8 @@ impl AppStore {
             }
             owned_subdomain
         } else {
+            let conn = self.conn.lock().await;
+            ensure_subdomain_not_registered_market(&conn, &requested_subdomain)?;
             requested_subdomain
         };
         {
@@ -861,17 +868,21 @@ impl AppStore {
         &self,
         config: &Config,
         proxy: &ProxyRegistry,
-        market: &MarketConfig,
+        market: &MarketRegistryRecord,
     ) -> Result<IssueLeaseResponse, AppError> {
         let now = Utc::now();
         let subdomain = normalize_subdomain(&market.subdomain)?;
-        if !config.is_market_subdomain(&subdomain) {
-            return Err(AppError::Unauthorized(
-                "market subdomain is not registered".into(),
-            ));
-        }
         {
             let conn = self.conn.lock().await;
+            let registered = get_market_by_email(&conn, &market.email)?
+                .filter(|stored| stored.status.eq_ignore_ascii_case("active"))
+                .filter(|stored| stored.subdomain == subdomain)
+                .is_some();
+            if !registered {
+                return Err(AppError::Unauthorized(
+                    "market subdomain is not registered".into(),
+                ));
+            }
             let live_lease_exists: bool = conn
                 .query_row(
                     "SELECT EXISTS(
@@ -936,6 +947,13 @@ impl AppStore {
             ],
         )
         .map_err(|e| AppError::Internal(format!("insert market lease failed: {e}")))?;
+        conn.execute(
+            "UPDATE router_markets
+             SET status = 'active', last_seen_at = ?2, updated_at = ?2, offline_since = NULL
+             WHERE email = ?1",
+            params![market.email, issued_at.to_rfc3339()],
+        )
+        .map_err(|e| AppError::Internal(format!("touch market lease presence failed: {e}")))?;
 
         Ok(IssueLeaseResponse {
             lease_id: lease.id,
@@ -1035,6 +1053,7 @@ impl AppStore {
         let subdomain = normalize_subdomain(&input.share.subdomain)?;
         ensure_subdomain_allowed(&subdomain, config)?;
         let conn = self.conn.lock().await;
+        ensure_subdomain_not_registered_market(&conn, &subdomain)?;
         let installation = get_installation(&conn, &input.installation_id)?;
         let Some(installation) = installation else {
             return Err(AppError::Unauthorized("installation not found".into()));
@@ -1262,7 +1281,7 @@ impl AppStore {
             .collect::<HashSet<_>>();
         let inflight_by_share = proxy.inflight_by_share().await;
         let now = Utc::now();
-        let (installations, shares, health_by_share, online_by_share, recent_logs) = {
+        let (installations, shares, health_by_share, online_by_share, recent_logs, markets) = {
             let conn = self.conn.lock().await;
             (
                 list_installations(&conn)?,
@@ -1270,6 +1289,7 @@ impl AppStore {
                 list_health_checks(&conn, 10)?,
                 list_online_minutes_24h(&conn)?,
                 list_recent_share_request_logs(&conn, SHARE_REQUEST_LOG_RECOVERY_LIMIT)?,
+                list_dashboard_markets(&conn, &active_subdomains)?,
             )
         };
         let logs_by_share = recent_logs.into_iter().fold(
@@ -1462,20 +1482,6 @@ impl AppStore {
             .iter()
             .filter_map(|client| client.share.as_ref().map(|share| share.active_requests))
             .sum();
-        let markets = config
-            .markets
-            .iter()
-            .map(|market| DashboardMarketView {
-                id: market.id.clone(),
-                display_name: market.display_name.clone(),
-                email: market.email.clone(),
-                subdomain: market.subdomain.clone(),
-                public_base_url: market.public_base_url.clone(),
-                status: market.status.clone(),
-                online: active_subdomains.contains(&market.subdomain),
-            })
-            .collect::<Vec<_>>();
-
         Ok(DashboardResponse {
             generated_at: now,
             stats: DashboardStats {
@@ -1624,8 +1630,13 @@ impl AppStore {
         config: &Config,
         proxy: &ProxyRegistry,
     ) -> Result<CleanupResult, AppError> {
+        let active_subdomains = proxy.active_subdomains().await;
         let cutoff = (Utc::now() - Duration::seconds(config.lease_retention_secs)).to_rfc3339();
         let stale_cutoff = (Utc::now() - Duration::seconds(config.client_stale_secs)).to_rfc3339();
+        let market_missing_cutoff =
+            (Utc::now() - Duration::seconds(MARKET_ACTIVE_MISSING_GRACE_SECS)).to_rfc3339();
+        let market_release_cutoff =
+            (Utc::now() - Duration::seconds(MARKET_OFFLINE_GRACE_SECS)).to_rfc3339();
         let (mut result, stale_subdomains) = {
             let conn = self.conn.lock().await;
             let tx = conn
@@ -1750,6 +1761,49 @@ impl AppStore {
             )
             .map_err(|e| AppError::Internal(format!("delete stale user sessions failed: {e}")))?;
 
+            let mut stmt = tx
+                .prepare("SELECT subdomain FROM router_markets WHERE status = 'active'")
+                .map_err(|e| {
+                    AppError::Internal(format!("prepare active market cleanup failed: {e}"))
+                })?;
+            let active_market_subdomains = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| {
+                    AppError::Internal(format!("query active market cleanup failed: {e}"))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| {
+                    AppError::Internal(format!("read active market cleanup failed: {e}"))
+                })?;
+            drop(stmt);
+            for subdomain in active_market_subdomains {
+                if active_subdomains.contains(&subdomain) {
+                    tx.execute(
+                        "UPDATE router_markets
+                         SET last_seen_at = ?2, updated_at = ?2, offline_since = NULL
+                         WHERE subdomain = ?1 AND status = 'active'",
+                        params![subdomain, Utc::now().to_rfc3339()],
+                    )
+                    .map_err(|e| AppError::Internal(format!("touch online market failed: {e}")))?;
+                } else {
+                    tx.execute(
+                        "UPDATE router_markets
+                         SET status = 'offline', offline_since = COALESCE(offline_since, ?2), updated_at = ?2
+                         WHERE subdomain = ?1 AND status = 'active' AND last_seen_at < ?3",
+                        params![subdomain, Utc::now().to_rfc3339(), market_missing_cutoff],
+                    )
+                    .map_err(|e| AppError::Internal(format!("mark offline market failed: {e}")))?;
+                }
+            }
+            tx.execute(
+                "DELETE FROM router_markets
+                 WHERE status = 'offline' AND offline_since < ?1",
+                params![market_release_cutoff],
+            )
+            .map_err(|e| {
+                AppError::Internal(format!("delete released offline markets failed: {e}"))
+            })?;
+
             tx.commit()
                 .map_err(|e| AppError::Internal(format!("commit cleanup tx failed: {e}")))?;
 
@@ -1820,6 +1874,120 @@ impl AppStore {
             })
             .map_err(|e| AppError::Internal(format!("query route targets failed: {e}")))?;
         collect_rows(rows)
+    }
+
+    pub async fn register_market(
+        &self,
+        email: &str,
+        input: RegisterMarketRequest,
+    ) -> Result<PublicMarketConfig, AppError> {
+        let email = normalize_email(email)?;
+        let subdomain = normalize_subdomain(&input.subdomain)?;
+        ensure_subdomain_not_reserved_word(&subdomain)?;
+        let display_name = input.display_name.trim();
+        if display_name.is_empty() || display_name.len() > 80 {
+            return Err(AppError::BadRequest("invalid market display name".into()));
+        }
+        let public_base_url = input.public_base_url.trim();
+        if !public_base_url.starts_with("http://") && !public_base_url.starts_with("https://") {
+            return Err(AppError::BadRequest(
+                "invalid market public base url".into(),
+            ));
+        }
+
+        let conn = self.conn.lock().await;
+        if let Some(existing_owner) = market_subdomain_owner(&conn, &subdomain)? {
+            if existing_owner != email {
+                return Err(AppError::Conflict(
+                    "market subdomain is already registered".into(),
+                ));
+            }
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let id = get_market_by_email(&conn, &email)?
+            .map(|market| market.id)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let scopes_json = serde_json::to_string(MARKET_DEFAULT_SCOPES)
+            .map_err(|e| AppError::Internal(format!("serialize market scopes failed: {e}")))?;
+        conn.execute(
+            "INSERT INTO router_markets (
+                id, display_name, email, subdomain, public_base_url, scopes_json,
+                status, listed, created_at, updated_at, last_seen_at, offline_since
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', 1, ?7, ?7, ?7, NULL)
+             ON CONFLICT(email) DO UPDATE SET
+                display_name = excluded.display_name,
+                subdomain = excluded.subdomain,
+                public_base_url = excluded.public_base_url,
+                scopes_json = excluded.scopes_json,
+                status = 'active',
+                listed = 1,
+                updated_at = excluded.updated_at,
+                last_seen_at = excluded.last_seen_at,
+                offline_since = NULL",
+            params![
+                id,
+                display_name,
+                email,
+                subdomain,
+                public_base_url,
+                scopes_json,
+                now
+            ],
+        )
+        .map_err(|e| AppError::Internal(format!("register market failed: {e}")))?;
+
+        Ok(PublicMarketConfig {
+            id,
+            display_name: display_name.to_string(),
+            email,
+            subdomain,
+            public_base_url: public_base_url.to_string(),
+            status: "active".to_string(),
+        })
+    }
+
+    pub async fn list_public_markets(&self) -> Result<Vec<PublicMarketConfig>, AppError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, display_name, email, subdomain, public_base_url, status
+                 FROM router_markets
+                 WHERE status = 'active' AND listed = 1
+                 ORDER BY display_name ASC, subdomain ASC",
+            )
+            .map_err(|e| AppError::Internal(format!("prepare public markets failed: {e}")))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(PublicMarketConfig {
+                    id: row.get(0)?,
+                    display_name: row.get(1)?,
+                    email: row.get(2)?,
+                    subdomain: row.get(3)?,
+                    public_base_url: row.get(4)?,
+                    status: row.get(5)?,
+                })
+            })
+            .map_err(|e| AppError::Internal(format!("query public markets failed: {e}")))?;
+        collect_rows(rows)
+    }
+
+    pub async fn authenticate_market_session(
+        &self,
+        access_token: &str,
+        required_scope: &str,
+    ) -> Result<MarketRegistryRecord, AppError> {
+        let session = self
+            .resolve_session_by_access_token(access_token)
+            .await?
+            .ok_or_else(|| AppError::Unauthorized("invalid market session".into()))?;
+        let conn = self.conn.lock().await;
+        let market = get_market_by_email(&conn, &session.email)?
+            .ok_or_else(|| AppError::Unauthorized("market is not registered".into()))?;
+        if !market.has_scope(required_scope) {
+            return Err(AppError::Unauthorized("market scope is not allowed".into()));
+        }
+        Ok(market)
     }
 
     pub async fn list_market_shares(
@@ -2482,6 +2650,21 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             last_used_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS router_markets (
+            id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            subdomain TEXT NOT NULL UNIQUE,
+            public_base_url TEXT NOT NULL,
+            scopes_json TEXT NOT NULL DEFAULT '[\"market:shares:read\",\"market:proxy:use\"]',
+            status TEXT NOT NULL DEFAULT 'active',
+            listed INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            offline_since TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_leases_installation_id ON leases(installation_id);
         CREATE INDEX IF NOT EXISTS idx_leases_subdomain ON leases(subdomain);
         CREATE INDEX IF NOT EXISTS idx_shares_installation_id ON shares(installation_id);
@@ -2495,6 +2678,8 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
         CREATE INDEX IF NOT EXISTS idx_auth_challenges_installation ON email_login_challenges(installation_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_user_sessions_installation ON user_sessions(installation_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_router_markets_status ON router_markets(status, listed, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_router_markets_subdomain ON router_markets(subdomain);
         ",
     )
     .map_err(|e| AppError::Internal(format!("init schema failed: {e}")))?;
@@ -3578,6 +3763,87 @@ fn ensure_subdomain_allowed(value: &str, config: &Config) -> Result<(), AppError
     Ok(())
 }
 
+fn ensure_subdomain_not_reserved_word(value: &str) -> Result<(), AppError> {
+    const RESERVED: &[&str] = &["admin", "api", "www", "cdn-cgi"];
+    if RESERVED.contains(&value) {
+        return Err(AppError::Conflict("subdomain is reserved".into()));
+    }
+    Ok(())
+}
+
+fn ensure_subdomain_not_registered_market(conn: &Connection, value: &str) -> Result<(), AppError> {
+    if market_subdomain_owner(conn, value)?.is_some() {
+        return Err(AppError::Conflict("subdomain is reserved".into()));
+    }
+    Ok(())
+}
+
+fn market_subdomain_owner(conn: &Connection, subdomain: &str) -> Result<Option<String>, AppError> {
+    conn.query_row(
+        "SELECT email FROM router_markets
+         WHERE subdomain = ?1
+           AND status IN ('active', 'offline', 'disabled')",
+        params![subdomain],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|e| AppError::Internal(format!("query market subdomain owner failed: {e}")))
+}
+
+fn get_market_by_email(
+    conn: &Connection,
+    email: &str,
+) -> Result<Option<MarketRegistryRecord>, AppError> {
+    conn.query_row(
+        "SELECT id, display_name, email, subdomain, public_base_url, scopes_json, status
+         FROM router_markets
+         WHERE email = ?1",
+        params![email],
+        |row| {
+            Ok(MarketRegistryRecord {
+                id: row.get(0)?,
+                display_name: row.get(1)?,
+                email: row.get(2)?,
+                subdomain: row.get(3)?,
+                public_base_url: row.get(4)?,
+                scopes: parse_string_vec(row.get(5)?)?,
+                status: row.get(6)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| AppError::Internal(format!("query market by email failed: {e}")))
+}
+
+fn list_dashboard_markets(
+    conn: &Connection,
+    active_subdomains: &HashSet<String>,
+) -> Result<Vec<DashboardMarketView>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, display_name, email, subdomain, public_base_url, status
+             FROM router_markets
+             WHERE status IN ('active', 'offline', 'disabled')
+             ORDER BY display_name ASC, subdomain ASC",
+        )
+        .map_err(|e| AppError::Internal(format!("prepare dashboard markets failed: {e}")))?;
+    let rows = stmt
+        .query_map([], |row| {
+            let subdomain: String = row.get(3)?;
+            Ok(DashboardMarketView {
+                id: row.get(0)?,
+                display_name: row.get(1)?,
+                email: row.get(2)?,
+                public_base_url: row.get(4)?,
+                status: row.get(5)?,
+                online: active_subdomains.contains(&subdomain),
+                subdomain,
+            })
+        })
+        .map_err(|e| AppError::Internal(format!("query dashboard markets failed: {e}")))?;
+    collect_rows(rows)
+}
+
 fn get_share_owned_subdomain(
     conn: &Connection,
     installation_id: &str,
@@ -4236,7 +4502,7 @@ fn enforce_share_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, MarketConfig, MarketTokenHash};
+    use crate::config::Config;
     use crate::models::ShareSyncOperation;
     use crate::proxy::ProxyRegistry;
     use ed25519_dalek::{Signer, SigningKey};
@@ -4274,7 +4540,6 @@ mod tests {
             free_share_ip_parallel_limit: 1,
             verification_service_base_url: "https://tokenswitch.org".into(),
             verification_service_api_key: None,
-            markets: Vec::new(),
         }
     }
 
@@ -4284,21 +4549,47 @@ mod tests {
         (store, config)
     }
 
-    fn test_market() -> MarketConfig {
-        MarketConfig {
+    fn test_market() -> MarketRegistryRecord {
+        MarketRegistryRecord {
             id: "main-market".into(),
             display_name: "Main Market".into(),
             email: "market@example.com".into(),
             subdomain: "market-a".into(),
             public_base_url: "https://market-a.example.com".into(),
-            token_hashes: vec![MarketTokenHash {
-                hash: "sha256:test".into(),
-                created_at: None,
-                expires_at: None,
-            }],
             scopes: vec!["market:shares:read".into(), "market:proxy:use".into()],
             status: "active".into(),
         }
+    }
+
+    async fn insert_market(store: &AppStore, market: &MarketRegistryRecord) {
+        let conn = store.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+        let scopes_json = serde_json::to_string(&market.scopes).expect("scopes json");
+        conn.execute(
+            "INSERT INTO router_markets (
+                id, display_name, email, subdomain, public_base_url, scopes_json,
+                status, listed, created_at, updated_at, last_seen_at, offline_since
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?8, ?8, NULL)
+             ON CONFLICT(email) DO UPDATE SET
+                display_name = excluded.display_name,
+                subdomain = excluded.subdomain,
+                public_base_url = excluded.public_base_url,
+                scopes_json = excluded.scopes_json,
+                status = excluded.status,
+                updated_at = excluded.updated_at,
+                last_seen_at = excluded.last_seen_at",
+            params![
+                market.id,
+                market.display_name,
+                market.email,
+                market.subdomain,
+                market.public_base_url,
+                scopes_json,
+                market.status,
+                now,
+            ],
+        )
+        .expect("insert market");
     }
 
     async fn insert_installation(store: &AppStore, installation_id: &str) {
@@ -4455,12 +4746,13 @@ mod tests {
 
     #[tokio::test]
     async fn issue_market_lease_uses_registered_market_subdomain() {
-        let (store, mut config) = setup_store("market-lease").await;
-        config.markets = vec![test_market()];
+        let (store, config) = setup_store("market-lease").await;
+        let market = test_market();
+        insert_market(&store, &market).await;
         let proxy = ProxyRegistry::default();
 
         let lease = store
-            .issue_market_lease(&config, &proxy, &config.markets[0])
+            .issue_market_lease(&config, &proxy, &market)
             .await
             .expect("issue market lease");
 
@@ -4485,17 +4777,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn register_market_upserts_same_email_and_rejects_subdomain_conflict() {
+        let (store, config) = setup_store("market-register").await;
+
+        let registered = store
+            .register_market(
+                "market@example.com",
+                RegisterMarketRequest {
+                    subdomain: "market-a".into(),
+                    display_name: "Main Market".into(),
+                    public_base_url: "https://market-a.example.com".into(),
+                },
+            )
+            .await
+            .expect("register market");
+        assert_eq!(registered.email, "market@example.com");
+        assert_eq!(registered.subdomain, "market-a");
+
+        let updated = store
+            .register_market(
+                "market@example.com",
+                RegisterMarketRequest {
+                    subdomain: "market-b".into(),
+                    display_name: "Renamed Market".into(),
+                    public_base_url: "https://market-b.example.com".into(),
+                },
+            )
+            .await
+            .expect("upsert same market email");
+        assert_eq!(updated.display_name, "Renamed Market");
+        assert_eq!(updated.subdomain, "market-b");
+
+        let err = store
+            .register_market(
+                "other@example.com",
+                RegisterMarketRequest {
+                    subdomain: "market-b".into(),
+                    display_name: "Other Market".into(),
+                    public_base_url: "https://market-b.example.com".into(),
+                },
+            )
+            .await
+            .expect_err("subdomain cannot be claimed by a different email");
+        assert!(err.to_string().contains("already registered"));
+
+        let public_markets = store.list_public_markets().await.expect("list markets");
+        assert_eq!(public_markets.len(), 1);
+        assert_eq!(public_markets[0].email, "market@example.com");
+
+        let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
     async fn issue_market_lease_rejects_duplicate_live_lease() {
-        let (store, mut config) = setup_store("market-lease-duplicate").await;
-        config.markets = vec![test_market()];
+        let (store, config) = setup_store("market-lease-duplicate").await;
+        let market = test_market();
+        insert_market(&store, &market).await;
         let proxy = ProxyRegistry::default();
 
         store
-            .issue_market_lease(&config, &proxy, &config.markets[0])
+            .issue_market_lease(&config, &proxy, &market)
             .await
             .expect("first market lease");
         let err = store
-            .issue_market_lease(&config, &proxy, &config.markets[0])
+            .issue_market_lease(&config, &proxy, &market)
             .await
             .expect_err("duplicate live market lease should fail");
         assert!(err.to_string().contains("already leased"));
@@ -4505,8 +4850,9 @@ mod tests {
 
     #[tokio::test]
     async fn claim_share_subdomain_rejects_registered_market_subdomain() {
-        let (store, mut config) = setup_store("market-subdomain-reserved").await;
-        config.markets = vec![test_market()];
+        let (store, config) = setup_store("market-subdomain-reserved").await;
+        let market = test_market();
+        insert_market(&store, &market).await;
         let signing_key = insert_signed_installation(&store, "inst-market-reserved").await;
 
         let share = ShareDescriptor {
