@@ -92,6 +92,10 @@ async fn main() -> Result<()> {
         cleanup_interval_secs = config.cleanup_interval_secs,
         lease_retention_secs = config.lease_retention_secs,
         client_stale_secs = config.client_stale_secs,
+        db_exists = config.db_path.exists(),
+        host_key_path = %config.host_key_path.display(),
+        host_key_exists = config.host_key_path.exists(),
+        env_exists = env_path.exists(),
         "starting cc-switch-router"
     );
     // 预加载 SSH host key 并计算指纹，提前失败在配置错误；也作为 lease 响应返回给客户端。

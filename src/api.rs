@@ -128,11 +128,32 @@ async fn issue_market_lease(
     headers: HeaderMap,
 ) -> Result<Json<IssueLeaseResponse>, AppError> {
     let market = authenticate_market(&state, &headers, "market:proxy:use").await?;
-    let mut response = state
+    let market_email = market.email.clone();
+    let market_subdomain = market.subdomain.clone();
+    let mut response = match state
         .store
         .issue_market_lease(&state.config, &state.proxy, &market)
-        .await?;
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::warn!(
+                market_email = %market_email,
+                requested_subdomain = %market_subdomain,
+                error = %err,
+                "market tunnel lease rejected"
+            );
+            return Err(err);
+        }
+    };
     response.ssh_host_fingerprint = state.ssh_host_fingerprint.clone();
+    tracing::info!(
+        market_email = %market_email,
+        subdomain = %response.subdomain,
+        connection_id = %response.connection_id,
+        ssh_addr = %response.ssh_addr,
+        "market tunnel lease issued"
+    );
     Ok(Json(response))
 }
 
@@ -179,17 +200,43 @@ async fn issue_lease(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<IssueLeaseRequest>,
 ) -> Result<Json<IssueLeaseResponse>, AppError> {
-    let mut response = state
+    let metadata = extract_client_metadata(&headers, addr);
+    let client_ip = metadata.ip.clone().unwrap_or_else(|| addr.ip().to_string());
+    let client_country = metadata.country_code.clone().unwrap_or_else(|| "-".into());
+    let requested_subdomain = input.requested_subdomain.clone();
+    let installation_id = input.installation_id.clone();
+    let share_id = input.share.as_ref().map(|share| share.share_id.clone());
+    let mut response = match state
         .store
-        .issue_lease(
-            &state.config,
-            &state.proxy,
-            input,
-            extract_client_metadata(&headers, addr),
-            None,
-        )
-        .await?;
+        .issue_lease(&state.config, &state.proxy, input, metadata, None)
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::warn!(
+                installation_id = %installation_id,
+                requested_subdomain = %requested_subdomain,
+                share_id = share_id.as_deref().unwrap_or("-"),
+                client_ip = %client_ip,
+                client_country = %client_country,
+                error = %err,
+                "client tunnel lease rejected"
+            );
+            return Err(err);
+        }
+    };
     response.ssh_host_fingerprint = state.ssh_host_fingerprint.clone();
+    tracing::info!(
+        installation_id = %installation_id,
+        requested_subdomain = %requested_subdomain,
+        subdomain = %response.subdomain,
+        share_id = share_id.as_deref().unwrap_or("-"),
+        connection_id = %response.connection_id,
+        ssh_addr = %response.ssh_addr,
+        client_ip = %client_ip,
+        client_country = %client_country,
+        "client tunnel lease issued"
+    );
     Ok(Json(response))
 }
 
