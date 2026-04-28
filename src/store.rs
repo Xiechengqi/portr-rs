@@ -872,6 +872,7 @@ impl AppStore {
     ) -> Result<IssueLeaseResponse, AppError> {
         let now = Utc::now();
         let subdomain = normalize_subdomain(&market.subdomain)?;
+        let market_installation_id = format!("market:{}", market.id);
         {
             let conn = self.conn.lock().await;
             let registered = get_market_by_email(&conn, &market.email)?
@@ -883,6 +884,14 @@ impl AppStore {
                     "market subdomain is not registered".into(),
                 ));
             }
+            conn.execute(
+                "DELETE FROM leases
+                 WHERE subdomain = ?1
+                   AND installation_id = ?2
+                   AND tunnel_type = 'market-http'",
+                params![subdomain, market_installation_id],
+            )
+            .map_err(|e| AppError::Internal(format!("delete stale market leases failed: {e}")))?;
             let live_lease_exists: bool = conn
                 .query_row(
                     "SELECT EXISTS(
@@ -905,7 +914,12 @@ impl AppStore {
             .await
             .is_some()
         {
-            return Err(AppError::Conflict("market subdomain already in use".into()));
+            proxy.remove_route(&subdomain).await;
+            tracing::warn!(
+                subdomain = %subdomain,
+                market_email = %market.email,
+                "removed stale market route before issuing replacement lease"
+            );
         }
 
         let issued_at = Utc::now();
@@ -4829,21 +4843,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn issue_market_lease_rejects_duplicate_live_lease() {
+    async fn issue_market_lease_replaces_stale_market_lease_and_route() {
         let (store, config) = setup_store("market-lease-duplicate").await;
         let market = test_market();
         insert_market(&store, &market).await;
         let proxy = ProxyRegistry::default();
 
-        store
+        let first = store
             .issue_market_lease(&config, &proxy, &market)
             .await
             .expect("first market lease");
-        let err = store
+        proxy
+            .set_route(
+                market.subdomain.clone(),
+                "127.0.0.1:65530".into(),
+                None,
+                None,
+                None,
+                false,
+                -1,
+            )
+            .await;
+
+        let second = store
             .issue_market_lease(&config, &proxy, &market)
             .await
-            .expect_err("duplicate live market lease should fail");
-        assert!(err.to_string().contains("already leased"));
+            .expect("replacement market lease");
+        assert_ne!(first.lease_id, second.lease_id);
+        let old_lease = store
+            .consume_lease(&first.ssh_username, &first.ssh_password)
+            .await
+            .expect_err("old market lease should be invalidated");
+        assert!(!old_lease.to_string().is_empty());
+        assert!(
+            proxy
+                .backend_for_host("market-a.127.0.0.1:8787", &config.tunnel_domain)
+                .await
+                .is_none()
+        );
 
         let _ = std::fs::remove_file(PathBuf::from(config.db_path));
     }
