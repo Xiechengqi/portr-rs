@@ -391,15 +391,15 @@
       /* Live request ticker (top-left) — stacked request feed */
       .map-ticker {
         position: absolute;
-        top: 16px;
-        left: 16px;
+        top: 3.5%;
+        left: 1.6%;
         z-index: 5;
         display: flex;
         flex-direction: column;
         align-items: flex-start;
-        gap: 8px;
+        gap: 5px;
         width: fit-content;
-        max-width: min(360px, calc(100vw - 32px));
+        max-width: min(42%, 440px);
         pointer-events: none;
       }
       .map-ticker:empty { display: none; }
@@ -407,14 +407,14 @@
         display: flex;
         align-items: center;
         width: fit-content;
-        max-width: min(620px, calc(100vw - 32px));
-        padding: 8px 11px;
-        border: 1px solid rgba(226, 232, 240, 0.95);
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.94);
-        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.09);
-        backdrop-filter: blur(10px);
-        font-size: 12px;
+        max-width: 100%;
+        padding: 4px 7px;
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.42);
+        box-shadow: none;
+        backdrop-filter: blur(2px);
+        font-size: 10px;
         color: var(--foreground);
         opacity: 0;
         transform: translateY(16px) scale(0.985);
@@ -439,7 +439,7 @@
       .map-ticker-row .ticker-headline {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 4px;
         min-width: 0;
         max-width: 100%;
         overflow: hidden;
@@ -447,22 +447,22 @@
       }
       .map-ticker-row .ticker-flag {
         flex: 0 0 auto;
-        font-size: 15px;
+        font-size: 11px;
         line-height: 1.1;
       }
       .map-ticker-row .ticker-country {
         flex: 0 0 auto;
         font-weight: 600;
-        font-size: 12px;
+        font-size: 10px;
         letter-spacing: 0.02em;
         line-height: 1.35;
       }
       .map-ticker-row .ticker-subdomain {
         flex: 0 1 auto;
         min-width: 18px;
-        max-width: 88px;
+        max-width: 52px;
         color: var(--muted-foreground);
-        font-size: 12px;
+        font-size: 10px;
         line-height: 1.35;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -471,7 +471,7 @@
         flex: 1 1 auto;
         min-width: 0;
         color: var(--foreground);
-        font-size: 12px;
+        font-size: 10px;
         font-weight: 600;
         line-height: 1.35;
         overflow: hidden;
@@ -480,16 +480,16 @@
       .map-ticker-row .ticker-time {
         flex: 0 0 auto;
         color: rgba(100, 116, 139, 0.82);
-        font: 11px/1.3 "JetBrains Mono", monospace;
+        font: 10px/1.3 "JetBrains Mono", monospace;
       }
       @media (max-width: 640px) {
         .map-ticker {
-          max-width: calc(100vw - 24px);
-          top: 12px;
-          left: 12px;
+          max-width: 72%;
+          top: 10px;
+          left: 10px;
         }
         .map-ticker-row {
-          max-width: calc(100vw - 24px);
+          max-width: 100%;
         }
       }
       @media (prefers-reduced-motion: reduce) {
