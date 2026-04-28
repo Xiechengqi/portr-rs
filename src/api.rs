@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
 
-use axum::extract::{ConnectInfo, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::extract::{ConnectInfo, Query, Request, State};
+use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{any, get, post};
-use axum::{Json, Router, response::Html};
+use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::ServerState;
@@ -40,7 +41,7 @@ struct SessionStatusQuery {
 
 pub fn router(state: ServerState) -> Router {
     Router::new()
-        .route("/", get(admin_page))
+        .route("/", any(root_handler))
         .route("/assets/world-map.svg", get(world_map_svg))
         .route("/favicon.ico", get(favicon))
         .route("/v1/healthz", get(health))
@@ -307,8 +308,30 @@ async fn session_me(
     ))
 }
 
-async fn admin_page() -> Html<&'static str> {
-    Html(include_str!("ui/dashboard.html"))
+async fn root_handler(
+    State(state): State<ServerState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    req: Request,
+) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    if state
+        .proxy
+        .backend_for_host(&host, &state.config.tunnel_domain)
+        .await
+        .is_some()
+    {
+        return proxy_handler(State(state), ConnectInfo(peer), req).await;
+    }
+
+    if matches!(*req.method(), Method::GET | Method::HEAD) {
+        return Html(include_str!("ui/dashboard.html")).into_response();
+    }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 const WORLD_MAP_SVG: &str = include_str!("ui/world-map.svg");
