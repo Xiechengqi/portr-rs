@@ -91,7 +91,7 @@ impl Config {
                 .unwrap_or(5),
             auth_email_hourly_limit: env_var("CC_SWITCH_ROUTER_AUTH_EMAIL_HOURLY_LIMIT")
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(5),
+                .unwrap_or(30),
             auth_ip_hourly_limit: env_var("CC_SWITCH_ROUTER_AUTH_IP_HOURLY_LIMIT")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(20),
@@ -210,7 +210,7 @@ CC_SWITCH_ROUTER_AUTH_CODE_COOLDOWN_SECS=60
 CC_SWITCH_ROUTER_AUTH_SESSION_TTL_SECS=1800
 CC_SWITCH_ROUTER_AUTH_REFRESH_TTL_SECS=2592000
 CC_SWITCH_ROUTER_AUTH_MAX_VERIFY_ATTEMPTS=5
-CC_SWITCH_ROUTER_AUTH_EMAIL_HOURLY_LIMIT=5
+CC_SWITCH_ROUTER_AUTH_EMAIL_HOURLY_LIMIT=30
 CC_SWITCH_ROUTER_AUTH_IP_HOURLY_LIMIT=20
 CC_SWITCH_ROUTER_AUTH_INSTALLATION_HOURLY_LIMIT=10
 CC_SWITCH_ROUTER_FREE_SHARE_IP_PARALLEL_LIMIT=1
@@ -263,7 +263,7 @@ mod tests {
             auth_session_ttl_secs: 300,
             auth_refresh_ttl_secs: 300,
             auth_max_verify_attempts: 5,
-            auth_email_hourly_limit: 5,
+            auth_email_hourly_limit: 30,
             auth_ip_hourly_limit: 5,
             auth_installation_hourly_limit: 5,
             free_share_ip_parallel_limit: 1,
