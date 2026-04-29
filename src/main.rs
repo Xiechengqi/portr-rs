@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
     if let Some(ref fp) = ssh_host_fingerprint {
         info!("ssh host key fingerprint: {}", fp);
     }
+    info!("router dashboard branding enabled: Switch Router logo + favicon");
 
     let state = ServerState {
         config: config.clone(),
