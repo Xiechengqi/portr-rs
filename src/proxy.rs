@@ -924,7 +924,13 @@ fn is_abuse_tracked_api_path(path: &str) -> bool {
 }
 
 fn is_allowed_direct_share_proxy_path(path: &str) -> bool {
-    path == "/v1" || path.starts_with("/v1/") || path.starts_with("/_share-router/")
+    path == "/v1"
+        || path.starts_with("/v1/")
+        || path == "/v1beta"
+        || path.starts_with("/v1beta/")
+        || path == "/gemini/v1beta"
+        || path.starts_with("/gemini/v1beta/")
+        || path.starts_with("/_share-router/")
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -1058,6 +1064,22 @@ mod tests {
         assert_eq!(route.share_id.as_deref(), Some("share-1"));
         assert!(route.is_free_share);
         assert_eq!(route.parallel_limit, 5);
+    }
+
+    #[test]
+    fn direct_share_proxy_path_allows_gemini_native_api() {
+        assert!(is_allowed_direct_share_proxy_path(
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent"
+        ));
+        assert!(is_allowed_direct_share_proxy_path(
+            "/gemini/v1beta/models/gemini-2.5-flash:streamGenerateContent"
+        ));
+    }
+
+    #[test]
+    fn direct_share_proxy_path_still_rejects_non_api_paths() {
+        assert!(!is_allowed_direct_share_proxy_path("/health"));
+        assert!(!is_allowed_direct_share_proxy_path("/favicon.ico"));
     }
 }
 
