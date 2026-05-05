@@ -926,6 +926,39 @@
         color: var(--muted-foreground);
         word-break: break-all;
       }
+      .market-stack {
+        display: grid;
+        gap: 6px;
+        min-width: 150px;
+      }
+      .market-stack a {
+        color: var(--foreground);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .market-stack a:hover { color: var(--accent); }
+      .market-stack .market-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .market-list {
+        display: grid;
+        gap: 8px;
+      }
+      .market-list-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+      }
+      .market-list-item a {
+        color: var(--foreground);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .market-list-item a:hover { color: var(--accent); }
       .status-stack {
         display: grid;
         gap: 8px;
@@ -1455,6 +1488,7 @@
                 <th>Share</th>
                 <th>API URL&KEY</th>
                 <th>ForSale</th>
+                <th>Market</th>
                 <th>Region</th>
                 <th>Status</th>
                 <th>Support</th>
@@ -3112,6 +3146,82 @@
         return `<span class="for-sale-pill ${cls}">${value}</span>`;
       }
 
+      function marketLinkAnchor(market) {
+        const href = market.publicBaseUrl || "#";
+        return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(market.displayName || market.subdomain || market.email || "Market")}</a>`;
+      }
+
+      function shareMarketCell(share) {
+        if (!share) return '<span class="meta">—</span>';
+        if (share.forSale === "Free") {
+          return '<span class="badge badge--active" title="This share is publicly available without market earnings settlement.">Public Free</span>';
+        }
+        if (share.forSale !== "Yes") return '<span class="meta">—</span>';
+
+        const links = share.marketLinks || [];
+        const unknown = share.unknownMarketEmails || [];
+        if (links.length === 0 && unknown.length === 0) {
+          return '<span class="badge badge--offline" title="ForSale is Yes, but no registered market is authorized.">No market</span>';
+        }
+        if (links.length === 1 && unknown.length === 0) {
+          const market = links[0];
+          return `
+            <div class="market-stack">
+              ${marketLinkAnchor(market)}
+              <div class="market-meta">${marketStatusBadge(market)}</div>
+            </div>
+          `;
+        }
+        const onlineCount = links.filter((market) => market.online).length;
+        const title = [
+          ...links.map((market) => `${market.displayName || market.email} (${market.online ? "Online" : "Offline"})`),
+          ...unknown.map((email) => `Unknown: ${email}`),
+        ].join("\\n");
+        return `
+          <div class="market-stack" title="${escapeHtml(title)}">
+            <strong>${links.length + unknown.length} markets</strong>
+            <span class="meta">${onlineCount} online${unknown.length ? ` · ${unknown.length} unknown` : ""}</span>
+          </div>
+        `;
+      }
+
+      function shareMarketList(share) {
+        if (!share) return '<div class="empty"><div class="empty-icon"></div>No share selected</div>';
+        if (share.forSale === "Free") {
+          return '<div class="item-card">Public Free share — not settled through a market.</div>';
+        }
+        if (share.forSale !== "Yes") {
+          return '<div class="item-card">This share is not marked for sale.</div>';
+        }
+        const links = share.marketLinks || [];
+        const unknown = share.unknownMarketEmails || [];
+        if (links.length === 0 && unknown.length === 0) {
+          return '<div class="item-card">ForSale is Yes, but no registered market is authorized.</div>';
+        }
+        const knownHtml = links.map((market) => `
+          <div class="item-card market-list-item">
+            <div>
+              ${marketLinkAnchor(market)}
+              <div class="item-card-meta">
+                <span>${escapeHtml(market.subdomain || "-")}</span>
+                <span>${escapeHtml(market.email || "-")}</span>
+              </div>
+            </div>
+            ${marketStatusBadge(market)}
+          </div>
+        `).join("");
+        const unknownHtml = unknown.map((email) => `
+          <div class="item-card market-list-item">
+            <div>
+              <strong>Unknown market</strong>
+              <div class="item-card-meta"><span>${escapeHtml(email)}</span></div>
+            </div>
+            <span class="badge badge--offline">Unknown</span>
+          </div>
+        `).join("");
+        return `<div class="market-list">${knownHtml}${unknownHtml}</div>`;
+      }
+
       function shareStatusStack(share, pct) {
         if (!share) return '<span class="meta">—</span>';
         if (!share.isOnline) {
@@ -3232,7 +3342,9 @@
 
         const logs = share?.recentRequests || [];
         document.getElementById("drawer-body").innerHTML = `
-          <div class="drawer-section-label">Request logs</div>
+          <div class="drawer-section-label">Markets</div>
+          ${shareMarketList(share)}
+          <div class="drawer-section-label" style="margin-top:20px">Request logs</div>
           ${logs.length ? logs.map(log => `
             <div class="item-card">
               <div class="item-card-top">
@@ -3463,13 +3575,14 @@
             <td>${share ? `<strong>${escapeHtml(share.shareName)}</strong>` : '<span class="meta">—</span>'}</td>
             <td class="meta">${shareApiStack(share)}</td>
             <td>${forSalePill(share)}</td>
+            <td>${shareMarketCell(share)}</td>
             <td class="meta">${escapeHtml(item.countryCode || "-")}</td>
             <td>${shareStatusStack(share, pct)}</td>
             <td>${share ? supportPills(share.support, share.appRuntimes) : '<span class="meta">—</span>'}</td>
             <td><span class="row-arrow">&rsaquo;</span></td>
           </tr>
         `;
-        }).join("") : `<tr><td colspan="7"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
+        }).join("") : `<tr><td colspan="8"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
 
         const marketsEl = document.getElementById("markets");
         marketsEl.innerHTML = markets.length ? markets.map((market) => `

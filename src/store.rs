@@ -30,10 +30,10 @@ use crate::models::{
     RegisterInstallationResponse, RegisterMarketRequest, RequestEmailCodeRequest,
     RequestEmailCodeResponse, SessionStatusResponse, ShareAppRuntimes, ShareBatchSyncRequest,
     ShareClaimSubdomainRequest, ShareDeleteRequest, ShareDescriptor, ShareHeartbeatRequest,
-    ShareRequestLogBatchSyncRequest, ShareRequestLogEntry, ShareRequestLogFetchResponse,
-    ShareRuntimeRefreshPayload, ShareRuntimeRefreshRequest, ShareRuntimeSnapshotResponse,
-    ShareSupport, ShareSyncRequest, ShareUpstreamProvider, ShareView, TunnelLease,
-    VerifyEmailCodeRequest, VerifyEmailCodeResponse,
+    ShareMarketLinkView, ShareRequestLogBatchSyncRequest, ShareRequestLogEntry,
+    ShareRequestLogFetchResponse, ShareRuntimeRefreshPayload, ShareRuntimeRefreshRequest,
+    ShareRuntimeSnapshotResponse, ShareSupport, ShareSyncRequest, ShareUpstreamProvider, ShareView,
+    TunnelLease, VerifyEmailCodeRequest, VerifyEmailCodeResponse,
 };
 use crate::proxy::ProxyRegistry;
 
@@ -1568,6 +1568,12 @@ impl AppStore {
         }
         installation_views.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
 
+        let market_by_email = markets
+            .iter()
+            .cloned()
+            .map(|market| (market.email.to_ascii_lowercase(), market))
+            .collect::<HashMap<_, _>>();
+
         let share_views = shares
             .into_iter()
             .map(|(installation_id, share)| {
@@ -1588,6 +1594,22 @@ impl AppStore {
                 let can_view_secret =
                     share.for_sale == "Free" || share_visible_to_email(&share, viewer_email);
                 let can_manage = can_manage_share(&share, viewer_email);
+                let market_links = share
+                    .shared_with_emails
+                    .iter()
+                    .filter_map(|email| market_by_email.get(&email.to_ascii_lowercase()))
+                    .map(dashboard_market_to_share_link)
+                    .collect::<Vec<_>>();
+                let unknown_market_emails = if can_manage {
+                    share
+                        .shared_with_emails
+                        .iter()
+                        .filter(|email| !market_by_email.contains_key(&email.to_ascii_lowercase()))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
                 ShareView {
                     share_id: share.share_id,
                     share_name: share.share_name,
@@ -1597,6 +1619,8 @@ impl AppStore {
                     } else {
                         Vec::new()
                     },
+                    market_links,
+                    unknown_market_emails,
                     description: share.description,
                     for_sale: share.for_sale,
                     subdomain: share.subdomain,
@@ -4109,6 +4133,18 @@ fn list_dashboard_markets(
     collect_rows(rows)
 }
 
+fn dashboard_market_to_share_link(market: &DashboardMarketView) -> ShareMarketLinkView {
+    ShareMarketLinkView {
+        id: market.id.clone(),
+        display_name: market.display_name.clone(),
+        email: market.email.clone(),
+        subdomain: market.subdomain.clone(),
+        public_base_url: market.public_base_url.clone(),
+        status: market.status.clone(),
+        online: market.online,
+    }
+}
+
 fn get_share_owned_subdomain(
     conn: &Connection,
     installation_id: &str,
@@ -6328,6 +6364,52 @@ mod tests {
         assert_eq!(points.clients[0].lat, 36.2);
         assert_eq!(points.clients[0].lon, 138.25);
         assert_eq!(points.clients[0].count, 3);
+
+        let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
+    async fn dashboard_snapshot_exposes_market_links_without_acl_emails() {
+        let (store, config) = setup_store("dashboard-market-links").await;
+        let market = test_market();
+        insert_market(&store, &market).await;
+        insert_installation(&store, "inst-1").await;
+        insert_share(
+            &store,
+            "inst-1",
+            "share-market",
+            "market-share-sub",
+            "active",
+        )
+        .await;
+        {
+            let conn = store.conn.lock().await;
+            conn.execute(
+                "UPDATE shares SET for_sale = 'Yes', shared_with_emails_json = ?2 WHERE share_id = ?1",
+                params![
+                    "share-market",
+                    serde_json::to_string(&vec![market.email.clone()]).expect("emails json")
+                ],
+            )
+            .expect("authorize market");
+        }
+
+        let server_geo = ServerGeo {
+            lat: None,
+            lon: None,
+        };
+        let proxy = ProxyRegistry::default();
+        let snapshot = store
+            .dashboard_snapshot(&config, &server_geo, &proxy, None)
+            .await
+            .expect("dashboard snapshot");
+        let share = snapshot.clients[0].share.as_ref().expect("share view");
+
+        assert!(share.shared_with_emails.is_empty());
+        assert_eq!(share.market_links.len(), 1);
+        assert_eq!(share.market_links[0].display_name, "Main Market");
+        assert_eq!(share.market_links[0].email, "market@example.com");
+        assert!(share.unknown_market_emails.is_empty());
 
         let _ = std::fs::remove_file(PathBuf::from(config.db_path));
     }

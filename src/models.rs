@@ -721,6 +721,18 @@ pub struct DashboardMarketView {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ShareMarketLinkView {
+    pub id: String,
+    pub display_name: String,
+    pub email: String,
+    pub subdomain: String,
+    pub public_base_url: String,
+    pub status: String,
+    pub online: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ShareView {
     pub share_id: String,
     pub share_name: String,
@@ -728,6 +740,10 @@ pub struct ShareView {
     pub owner_email: Option<String>,
     #[serde(default)]
     pub shared_with_emails: Vec<String>,
+    #[serde(default)]
+    pub market_links: Vec<ShareMarketLinkView>,
+    #[serde(default)]
+    pub unknown_market_emails: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub for_sale: String,
