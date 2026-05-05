@@ -25,10 +25,11 @@
         color: var(--foreground);
       }
       .page {
+        width: calc(100% - 40px);
         max-width: 1200px;
         min-height: 100vh;
         margin: 0 auto;
-        padding: 28px 20px 32px;
+        padding: 28px 0 32px;
         display: flex;
         flex-direction: column;
       }
@@ -853,7 +854,13 @@
         border: 1px solid var(--border);
         border-radius: 20px;
         box-shadow: var(--shadow);
-        overflow: hidden;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+      .clients-table-card table {
+        min-width: 1280px;
       }
       table {
         width: 100%;
@@ -1380,6 +1387,12 @@
         .drawer-summary { grid-template-columns: 1fr 1fr; }
         .topbar-right { width: 100%; }
       }
+      @media (min-width: 1500px) {
+        .page {
+          width: 80%;
+          max-width: 1520px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1481,7 +1494,7 @@
       <!-- Clients -->
       <section class="section">
         <div class="section-label reveal">CLIENTS <span id="client-count">0</span></div>
-        <div class="table-card reveal" data-reveal-delay="1">
+        <div class="table-card clients-table-card reveal" data-reveal-delay="1">
           <table>
             <thead>
               <tr>
