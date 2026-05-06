@@ -860,7 +860,7 @@
         -webkit-overflow-scrolling: touch;
       }
       .clients-table-card table {
-        min-width: 1280px;
+        min-width: 1180px;
       }
       table {
         width: 100%;
@@ -949,6 +949,17 @@
         flex-wrap: wrap;
         gap: 6px;
         align-items: center;
+      }
+      .for-sale-market-stack {
+        display: grid;
+        gap: 6px;
+        min-width: 120px;
+      }
+      .for-sale-market-list {
+        display: grid;
+        gap: 3px;
+        font: 11px/1.35 "JetBrains Mono", monospace;
+        color: var(--muted-foreground);
       }
       .market-list {
         display: grid;
@@ -1389,8 +1400,8 @@
       }
       @media (min-width: 1500px) {
         .page {
-          width: 80%;
-          max-width: 1520px;
+          width: 70%;
+          max-width: 1360px;
         }
       }
     </style>
@@ -1501,7 +1512,6 @@
                 <th>Share</th>
                 <th>API URL&KEY</th>
                 <th>ForSale</th>
-                <th>Market</th>
                 <th>Region</th>
                 <th>Status</th>
                 <th>Support</th>
@@ -3159,6 +3169,23 @@
         return `<span class="for-sale-pill ${cls}">${value}</span>`;
       }
 
+      function forSaleMarketCell(share) {
+        if (!share) return '<span class="meta">—</span>';
+        const links = share.marketLinks || [];
+        const marketLines = links
+          .map((market) => market.subdomain || "")
+          .filter(Boolean)
+          .map(escapeHtml);
+        return `
+          <div class="for-sale-market-stack">
+            ${forSalePill(share)}
+            ${marketLines.length
+              ? `<div class="for-sale-market-list">${marketLines.map((line) => `<div>${line}</div>`).join("")}</div>`
+              : ""}
+          </div>
+        `;
+      }
+
       function marketLinkAnchor(market) {
         const href = market.publicBaseUrl || "#";
         return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(market.displayName || market.subdomain || market.email || "Market")}</a>`;
@@ -3587,15 +3614,14 @@
           <tr onclick="openClient(${i})" data-installation-id="${escapeHtml(item.id)}">
             <td>${share ? `<strong>${escapeHtml(share.shareName)}</strong>` : '<span class="meta">—</span>'}</td>
             <td class="meta">${shareApiStack(share)}</td>
-            <td>${forSalePill(share)}</td>
-            <td>${shareMarketCell(share)}</td>
+            <td>${forSaleMarketCell(share)}</td>
             <td class="meta">${escapeHtml(item.countryCode || "-")}</td>
             <td>${shareStatusStack(share, pct)}</td>
             <td>${share ? supportPills(share.support, share.appRuntimes) : '<span class="meta">—</span>'}</td>
             <td><span class="row-arrow">&rsaquo;</span></td>
           </tr>
         `;
-        }).join("") : `<tr><td colspan="8"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
+        }).join("") : `<tr><td colspan="7"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
 
         const marketsEl = document.getElementById("markets");
         marketsEl.innerHTML = markets.length ? markets.map((market) => `
