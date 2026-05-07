@@ -1532,9 +1532,9 @@
               <tr>
                 <th>Market</th>
                 <th>Public URL</th>
-                <th>Email</th>
-                <th>Subdomain</th>
-                <th>Status</th>
+                <th>Health</th>
+                <th>Load</th>
+                <th style="width:28px"></th>
               </tr>
             </thead>
             <tbody id="markets"></tbody>
@@ -1594,6 +1594,7 @@
     <script>
       console.info("[cc-switch-router] loaded Switch Router dashboard UI with router logo");
       let _clients = [];
+      let _markets = [];
       let _drawerOpen = false;
       let _mapZoom = 1;
       let _mapPanX = 0;
@@ -2260,19 +2261,34 @@
         return `${formatCompactTokenCount(count)} token${count === 1 ? "" : "s"}`;
       }
 
+      function formatMarketFee(value) {
+        if (value == null || value === "") return "";
+        const amount = Number(value);
+        if (!Number.isFinite(amount)) return "";
+        return `$${amount.toFixed(amount >= 1 ? 2 : 4)}`;
+      }
+
       function tickerRowText(event) {
         const shareMeta = _shareMetaById.get(event.shareId) || null;
         const requestMeta = _requestMetaById.get(event.requestId) || null;
         const subdomain = event.shareSubdomain || shareMeta?.subdomain || event.shareName || shareMeta?.shareName || shareMeta?.platform || "share";
         const modelName = requestMeta?.requestModel || requestMeta?.model || "-";
         const status = requestMeta?.statusCode ?? "-";
+        const details = [
+          requestMeta?.userEmail || "",
+          modelName,
+          status,
+          formatTickerLatency(requestMeta?.latencyMs),
+          formatTickerTokens(requestMeta),
+          formatMarketFee(requestMeta?.usageAmountUsd),
+        ].filter(Boolean);
         return {
           time: formatTickerUtcTime(event.startedAt, requestMeta?.createdAt),
           flag: countryToFlagEmoji(event.userCountry),
           country: event.userCountry || "--",
           subdomain,
           modelName,
-          detail: `${modelName} · ${status} · ${formatTickerLatency(requestMeta?.latencyMs)} · ${formatTickerTokens(requestMeta)}`,
+          detail: details.join(" · "),
         };
       }
 
@@ -2476,10 +2492,14 @@
         syncRequestTickerClock();
       }
 
-      function rebuildRequestTickerIndexes(clients, tickerShares) {
+      function rebuildRequestTickerIndexes(clients, tickerShares, marketRequestLogs) {
         const shareMetaById = new Map();
         const requestMetaById = new Map();
         const latestRequestMetaByShareId = new Map();
+        const marketMetaById = new Map();
+        for (const log of marketRequestLogs || []) {
+          if (log?.requestId) marketMetaById.set(log.requestId, log);
+        }
         const tickerShareList = Array.isArray(tickerShares) && tickerShares.length > 0
           ? tickerShares
           : (clients || []).map((client) => ({
@@ -2513,6 +2533,9 @@
               cacheReadTokens: req.cacheReadTokens || 0,
               cacheCreationTokens: req.cacheCreationTokens || 0,
               createdAt: req.createdAt || "",
+              userEmail: marketMetaById.get(req.requestId)?.userEmail || "",
+              apiKeyPrefix: marketMetaById.get(req.requestId)?.apiKeyPrefix || "",
+              usageAmountUsd: marketMetaById.get(req.requestId)?.usageAmountUsd || "",
             });
           }
           if (recentRequests.length > 0) {
@@ -2530,6 +2553,25 @@
               createdAt: latest?.createdAt || "",
             });
           }
+        }
+        for (const [requestId, log] of marketMetaById.entries()) {
+          const existing = requestMetaById.get(requestId) || {};
+          requestMetaById.set(requestId, {
+            ...existing,
+            shareId: existing.shareId || log.shareId || "",
+            model: existing.model || log.model || "",
+            requestModel: existing.requestModel || log.model || "",
+            statusCode: existing.statusCode || log.statusCode || log.status || "",
+            latencyMs: existing.latencyMs || log.latencyMs || 0,
+            inputTokens: existing.inputTokens || log.inputTokens || 0,
+            outputTokens: existing.outputTokens || log.outputTokens || 0,
+            cacheReadTokens: existing.cacheReadTokens || log.cacheReadTokens || 0,
+            cacheCreationTokens: existing.cacheCreationTokens || log.cacheCreationTokens || 0,
+            createdAt: existing.createdAt || log.createdAt || "",
+            userEmail: log.userEmail || existing.userEmail || "",
+            apiKeyPrefix: log.apiKeyPrefix || existing.apiKeyPrefix || "",
+            usageAmountUsd: log.usageAmountUsd || existing.usageAmountUsd || "",
+          });
         }
         _shareMetaById = shareMetaById;
         _requestMetaById = requestMetaById;
@@ -3160,6 +3202,68 @@
         return `<span class="badge badge--offline">${escapeHtml(label)}</span>`;
       }
 
+      function marketHealthLabel(market) {
+        if (!market) return "Offline";
+        if (market.status === "disabled") return "Disabled";
+        if (market.status === "offline") return "Offline";
+        if (!market.online) return "Route offline";
+        if ((market.shareCount || 0) === 0) return "No shares";
+        if ((market.shareCount || 0) > 0 && (market.onlineShareCount || 0) === 0) return "No online shares";
+        return "Healthy";
+      }
+
+      function marketHealthBadge(market) {
+        const label = marketHealthLabel(market);
+        const ok = label === "Healthy";
+        return `<span class="badge ${ok ? "badge--online" : "badge--offline"}">${escapeHtml(label)}</span>`;
+      }
+
+      function formatParallelCapacity(value) {
+        return Number(value) === -1 ? "∞" : String(Math.max(0, Number(value || 0)));
+      }
+
+      function marketHealthStack(market) {
+        if (!market) return '<span class="meta">—</span>';
+        const shares = `${Number(market.onlineShareCount || 0)} / ${Number(market.shareCount || 0)}`;
+        const onlineRate = formatPct(Number(market.avgOnlineRate24h || 0));
+        return `
+          <div class="status-stack">
+            <div class="status-line">
+              <span class="status-line-label">Health</span>
+              <div class="status-line-value">${marketHealthBadge(market)}</div>
+            </div>
+            <div class="status-line">
+              <span class="status-line-label">Registry</span>
+              <div class="status-line-value"><strong>${escapeHtml(market.status || "-")}</strong></div>
+            </div>
+            <div class="status-line">
+              <span class="status-line-label">Shares</span>
+              <div class="status-line-value"><strong>${shares}</strong></div>
+            </div>
+            <div class="status-line">
+              <span class="status-line-label">Online</span>
+              <div class="status-line-value"><strong>${onlineRate}</strong></div>
+            </div>
+          </div>
+        `;
+      }
+
+      function marketLoadStack(market) {
+        if (!market) return '<span class="meta">—</span>';
+        return `
+          <div class="status-stack">
+            <div class="status-line">
+              <span class="status-line-label">Parallel</span>
+              <div class="status-line-value"><strong>${Number(market.activeRequests || 0)}<span class="parallel-shared">/${escapeHtml(formatParallelCapacity(market.parallelCapacity))}</span></strong></div>
+            </div>
+            <div class="status-line">
+              <span class="status-line-label">Seen</span>
+              <div class="status-line-value"><strong title="${fullTime(market.lastSeenAt)}">${relTime(market.lastSeenAt)}</strong></div>
+            </div>
+          </div>
+        `;
+      }
+
       function forSalePill(share) {
         if (!share) return '<span class="meta">—</span>';
         const value = share.forSale === "Free" ? "Free" : (share.forSale === "Yes" ? "Yes" : "No");
@@ -3260,6 +3364,65 @@
           </div>
         `).join("");
         return `<div class="market-list">${knownHtml}${unknownHtml}</div>`;
+      }
+
+      function marketLinkedShareList(market) {
+        const shares = market?.linkedShares || [];
+        if (!shares.length) {
+          return '<div class="empty"><div class="empty-icon"></div>No authorized shares</div>';
+        }
+        return `<div class="market-list">${shares.map((share) => `
+          <div class="item-card market-list-item">
+            <div>
+              <strong>${escapeHtml(share.shareName || share.shareId || "-")}</strong>
+              <div class="item-card-meta">
+                <span>${escapeHtml(share.appType || "-")}</span>
+                <span>${escapeHtml(share.ownerEmail || "-")}</span>
+              </div>
+              <div class="item-card-meta">
+                <span>${Number(share.activeRequests || 0)} / ${escapeHtml(formatParallelCapacity(share.parallelLimit))} parallel</span>
+                <span>${formatPct(Number(share.onlineRate24h || 0))} 24h online</span>
+              </div>
+            </div>
+            <div style="display:grid;justify-items:end;gap:6px">
+              <span class="badge ${share.online ? "badge--online" : "badge--offline"}">${share.online ? "Online" : "Offline"}</span>
+              ${supportPills(share.support || {}, null)}
+            </div>
+          </div>
+        `).join("")}</div>`;
+      }
+
+      function marketRecentRequestList(market) {
+        const logs = market?.recentRequests || [];
+        if (!logs.length) {
+          return '<div class="empty"><div class="empty-icon"></div>No market requests yet</div>';
+        }
+        return logs.slice(0, 20).map((log) => {
+          const total = totalTokens(log);
+          const status = log.statusCode || log.status || "-";
+          const parts = [
+            log.userEmail || "-",
+            log.shareSubdomain || log.shareId || "-",
+            log.model || "-",
+            status,
+            formatTickerLatency(log.latencyMs),
+            `${formatCompactTokenCount(total)} tokens`,
+            formatMarketFee(log.usageAmountUsd),
+          ].filter(Boolean);
+          return `
+            <div class="item-card">
+              <div class="item-card-top">
+                <div>
+                  <strong>${escapeHtml(parts.join(" · "))}</strong>
+                  <div class="item-card-meta">
+                    <span title="${fullTime(log.createdAt)}">${escapeHtml(formatTickerUtcTime(log.createdAt))}</span>
+                    <span>${escapeHtml(log.requestId || "-")}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("");
       }
 
       function shareStatusStack(share, pct) {
@@ -3410,6 +3573,58 @@
               </div>
             </div>
           `).join("") : '<div class="empty"><div class="empty-icon"></div>No request logs yet</div>'}`;
+
+        openDrawer();
+      }
+
+      function openMarket(index) {
+        const market = _markets[index];
+        if (!market) return;
+
+        document.getElementById("drawer-title").textContent = market.displayName || market.id || "Market";
+        document.getElementById("drawer-meta").textContent = market.email || "";
+
+        document.getElementById("drawer-summary").innerHTML = `
+          <div class="drawer-summary-item">
+            <small>Health</small>
+            <strong>${marketHealthLabel(market)}</strong>
+          </div>
+          <div class="drawer-summary-item">
+            <small>Registry</small>
+            <strong>${escapeHtml(market.status || "-")}</strong>
+          </div>
+          <div class="drawer-summary-item">
+            <small>Shares</small>
+            <strong>${Number(market.onlineShareCount || 0)} / ${Number(market.shareCount || 0)}</strong>
+          </div>
+          <div class="drawer-summary-item">
+            <small>Parallel</small>
+            <strong>${Number(market.activeRequests || 0)} / ${escapeHtml(formatParallelCapacity(market.parallelCapacity))}</strong>
+          </div>`;
+
+        document.getElementById("drawer-body").innerHTML = `
+          <div class="drawer-section-label">Access</div>
+          <div class="item-card">
+            <div class="item-card-grid">
+              <div class="item-card-grid-cell">Public URL<span><a href="${escapeHtml(market.publicBaseUrl || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(market.publicBaseUrl || "-")}</a></span></div>
+              <div class="item-card-grid-cell">Subdomain<span>${escapeHtml(market.subdomain || "-")}</span></div>
+              <div class="item-card-grid-cell">Market ID<span>${escapeHtml(market.id || "-")}</span></div>
+              <div class="item-card-grid-cell">Avg Online<span>${formatPct(Number(market.avgOnlineRate24h || 0))}</span></div>
+            </div>
+          </div>
+          <div class="drawer-section-label" style="margin-top:20px">Timeline</div>
+          <div class="item-card">
+            <div class="item-card-grid">
+              <div class="item-card-grid-cell">Created<span title="${fullTime(market.createdAt)}">${relTime(market.createdAt)}</span></div>
+              <div class="item-card-grid-cell">Updated<span title="${fullTime(market.updatedAt)}">${relTime(market.updatedAt)}</span></div>
+              <div class="item-card-grid-cell">Last Seen<span title="${fullTime(market.lastSeenAt)}">${relTime(market.lastSeenAt)}</span></div>
+              <div class="item-card-grid-cell">Offline Since<span title="${fullTime(market.offlineSince)}">${market.offlineSince ? relTime(market.offlineSince) : "—"}</span></div>
+            </div>
+          </div>
+          <div class="drawer-section-label" style="margin-top:20px">Linked Shares</div>
+          ${marketLinkedShareList(market)}
+          <div class="drawer-section-label" style="margin-top:20px">Recent Requests</div>
+          ${marketRecentRequestList(market)}`;
 
         openDrawer();
       }
@@ -3586,7 +3801,7 @@
           const id = c?.installation?.id;
           if (id && reqs > 0) clientFlow.set(id, reqs);
         }
-        rebuildRequestTickerIndexes(data.clients || [], data.tickerShares || []);
+        rebuildRequestTickerIndexes(data.clients || [], data.tickerShares || [], data.marketRequestLogs || []);
         console.debug("[ticker] dashboard fetch", {
           recentRequestEvents: Array.isArray(data.recentRequestEvents) ? data.recentRequestEvents.length : null,
           tickerShares: Array.isArray(data.tickerShares) ? data.tickerShares.length : null,
@@ -3598,8 +3813,8 @@
 
         /* section counts */
         document.getElementById("client-count").textContent = _clients.length;
-        const markets = sortMarkets(data.markets || []);
-        document.getElementById("market-count").textContent = markets.length;
+        _markets = sortMarkets(data.markets || []);
+        document.getElementById("market-count").textContent = _markets.length;
 
         /* skip DOM rewrite while drawer is open to prevent flicker */
         if (_drawerOpen) return;
@@ -3624,13 +3839,19 @@
         }).join("") : `<tr><td colspan="7"><div class="empty"><div class="empty-icon"></div>No clients yet</div></td></tr>`;
 
         const marketsEl = document.getElementById("markets");
-        marketsEl.innerHTML = markets.length ? markets.map((market) => `
-          <tr>
-            <td><strong>${escapeHtml(market.displayName || market.id || "-")}</strong></td>
-            <td class="meta"><a href="${escapeHtml(market.publicBaseUrl || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(market.publicBaseUrl || "-")}</a></td>
-            <td class="meta">${escapeHtml(market.email || "-")}</td>
-            <td class="meta">${escapeHtml(market.subdomain || "-")}</td>
-            <td>${marketStatusBadge(market)}</td>
+        marketsEl.innerHTML = _markets.length ? _markets.map((market, i) => `
+          <tr onclick="openMarket(${i})">
+            <td>
+              <strong>${escapeHtml(market.displayName || market.id || "-")}</strong>
+              <div class="meta">${escapeHtml(market.email || "-")}</div>
+            </td>
+            <td class="meta">
+              <a href="${escapeHtml(market.publicBaseUrl || "#")}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escapeHtml(market.publicBaseUrl || "-")}</a>
+              <div>${escapeHtml(market.subdomain || "-")}</div>
+            </td>
+            <td>${marketHealthStack(market)}</td>
+            <td>${marketLoadStack(market)}</td>
+            <td><span class="row-arrow">&rsaquo;</span></td>
           </tr>
         `).join("") : `<tr><td colspan="5"><div class="empty"><div class="empty-icon"></div>No markets configured</div></td></tr>`;
       }

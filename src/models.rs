@@ -270,6 +270,83 @@ pub struct ShareRequestLogBatchSyncRequest {
     pub logs: Vec<ShareRequestLogEntry>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketRequestLogBatchSyncRequest {
+    pub logs: Vec<MarketRequestLogEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketRequestLogEntry {
+    pub request_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_subdomain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    #[serde(default)]
+    pub input_tokens: u32,
+    #[serde(default)]
+    pub output_tokens: u32,
+    #[serde(default)]
+    pub cache_read_tokens: u32,
+    #[serde(default)]
+    pub cache_creation_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_amount_usd: Option<String>,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardMarketRequestLogView {
+    pub request_id: String,
+    pub market_id: String,
+    pub market_email: String,
+    pub market_subdomain: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_subdomain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cache_read_tokens: u32,
+    pub cache_creation_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_amount_usd: Option<String>,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareRuntimeRefreshPayload {
@@ -449,6 +526,7 @@ pub struct MarketNotificationEmailLogView {
 pub struct MarketShareView {
     pub router_id: String,
     pub share_id: String,
+    pub subdomain: String,
     pub installation_id: String,
     pub share_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -631,6 +709,8 @@ pub struct DashboardResponse {
     /// `request_id` and animates a one-shot burst arc per new event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_request_events: Vec<crate::recent_traffic::RecentRequestEvent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub market_request_logs: Vec<DashboardMarketRequestLogView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -717,6 +797,35 @@ pub struct DashboardMarketView {
     pub public_base_url: String,
     pub status: String,
     pub online: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_seen_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline_since: Option<String>,
+    pub share_count: usize,
+    pub online_share_count: usize,
+    pub active_requests: usize,
+    pub parallel_capacity: i64,
+    pub avg_online_rate_24h: f64,
+    #[serde(default)]
+    pub linked_shares: Vec<MarketLinkedShareView>,
+    #[serde(default)]
+    pub recent_requests: Vec<DashboardMarketRequestLogView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketLinkedShareView {
+    pub share_id: String,
+    pub share_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_email: Option<String>,
+    pub app_type: String,
+    pub online: bool,
+    pub active_requests: usize,
+    pub parallel_limit: i64,
+    pub online_rate_24h: f64,
+    pub support: ShareSupport,
 }
 
 #[derive(Debug, Clone, Serialize)]

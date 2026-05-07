@@ -91,6 +91,25 @@ impl RecentTraffic {
         user_country_iso2: Option<String>,
     ) -> String {
         let request_id = Uuid::new_v4().to_string();
+        self.record_with_id(
+            request_id.clone(),
+            share_id,
+            share_name,
+            share_subdomain,
+            user_country_iso2,
+        )
+        .await;
+        request_id
+    }
+
+    pub async fn record_with_id(
+        &self,
+        request_id: String,
+        share_id: String,
+        share_name: Option<String>,
+        share_subdomain: Option<String>,
+        user_country_iso2: Option<String>,
+    ) {
         let user_country_iso3 = user_country_iso2
             .as_deref()
             .and_then(iso2_to_iso3)
@@ -118,7 +137,6 @@ impl RecentTraffic {
                 state.inflight_request_ids.remove(&dropped.request_id);
             }
         }
-        request_id
     }
 
     /// Mark a previously-recorded request as no longer in-flight. The matching

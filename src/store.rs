@@ -21,11 +21,12 @@ use crate::error::AppError;
 use crate::models::{
     AuthSession, AuthUser, BindInstallationOwnerEmailRequest, BindInstallationOwnerEmailResponse,
     ChangeInstallationOwnerEmailRequest, ChangeInstallationOwnerEmailResponse, ClientMetadata,
-    DashboardClientView, DashboardMap, DashboardMapPoint, DashboardMarketView,
-    DashboardPresenceRequest, DashboardResponse, DashboardStats, DashboardTickerShare,
-    GetInstallationOwnerEmailQuery, GetInstallationOwnerEmailResponse, HealthCheckEntry,
-    Installation, InstallationView, IssueLeaseRequest, IssueLeaseResponse, LatLonPoint,
-    MarketRegistryRecord, MarketShareView, PublicMapClientPoint, PublicMapPointsResponse,
+    DashboardClientView, DashboardMap, DashboardMapPoint, DashboardMarketRequestLogView,
+    DashboardMarketView, DashboardPresenceRequest, DashboardResponse, DashboardStats,
+    DashboardTickerShare, GetInstallationOwnerEmailQuery, GetInstallationOwnerEmailResponse,
+    HealthCheckEntry, Installation, InstallationView, IssueLeaseRequest, IssueLeaseResponse,
+    LatLonPoint, MarketLinkedShareView, MarketRegistryRecord, MarketRequestLogBatchSyncRequest,
+    MarketRequestLogEntry, MarketShareView, PublicMapClientPoint, PublicMapPointsResponse,
     PublicMarketConfig, RefreshSessionRequest, RegisterInstallationRequest,
     RegisterInstallationResponse, RegisterMarketRequest, RequestEmailCodeRequest,
     RequestEmailCodeResponse, SessionStatusResponse, ShareAppRuntimes, ShareBatchSyncRequest,
@@ -50,6 +51,7 @@ const MARKET_DEFAULT_SCOPES: &[&str] = &[
     "market:shares:read",
     "market:proxy:use",
     "market:email:notify",
+    "market:request_logs:write",
 ];
 
 #[derive(serde::Serialize)]
@@ -1468,7 +1470,7 @@ impl AppStore {
             .collect::<HashSet<_>>();
         let inflight_by_share = proxy.inflight_by_share().await;
         let now = Utc::now();
-        let (installations, shares, health_by_share, online_by_share, recent_logs, markets) = {
+        let (installations, shares, health_by_share, online_by_share, recent_logs, market_logs) = {
             let conn = self.conn.lock().await;
             (
                 list_installations(&conn)?,
@@ -1476,8 +1478,28 @@ impl AppStore {
                 list_health_checks(&conn, 10)?,
                 list_online_minutes_24h(&conn)?,
                 list_recent_share_request_logs(&conn, SHARE_REQUEST_LOG_RECOVERY_LIMIT)?,
-                list_dashboard_markets(&conn, &active_subdomains)?,
+                list_recent_market_request_logs(&conn, 200)?,
             )
+        };
+        let market_logs_by_market = market_logs.iter().cloned().fold(
+            HashMap::<String, Vec<DashboardMarketRequestLogView>>::new(),
+            |mut acc, log| {
+                acc.entry(log.market_email.to_ascii_lowercase())
+                    .or_default()
+                    .push(log);
+                acc
+            },
+        );
+        let markets = {
+            let conn = self.conn.lock().await;
+            list_dashboard_markets(
+                &conn,
+                &active_subdomains,
+                &shares,
+                &inflight_by_share,
+                &online_by_share,
+                &market_logs_by_market,
+            )?
         };
         let logs_by_share = recent_logs.into_iter().fold(
             HashMap::<String, Vec<ShareRequestLogEntry>>::new(),
@@ -1726,6 +1748,7 @@ impl AppStore {
             country_counts,
             user_country_counts: HashMap::new(),
             recent_request_events: Vec::new(),
+            market_request_logs: market_logs,
         })
     }
 
@@ -2265,6 +2288,30 @@ impl AppStore {
         collect_rows(rows)
     }
 
+    pub async fn batch_sync_market_request_logs(
+        &self,
+        market: &MarketRegistryRecord,
+        input: MarketRequestLogBatchSyncRequest,
+    ) -> Result<usize, AppError> {
+        if input.logs.len() > 500 {
+            return Err(AppError::BadRequest("too many market request logs".into()));
+        }
+        let conn = self.conn.lock().await;
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            AppError::Internal(format!("begin market request log sync tx failed: {e}"))
+        })?;
+        let mut count = 0;
+        for log in input.logs {
+            validate_market_request_log(&log)?;
+            upsert_market_request_log_tx(&tx, market, log)?;
+            count += 1;
+        }
+        tx.commit().map_err(|e| {
+            AppError::Internal(format!("commit market request log sync failed: {e}"))
+        })?;
+        Ok(count)
+    }
+
     pub async fn list_market_shares(
         &self,
         market_email: &str,
@@ -2298,10 +2345,11 @@ impl AppStore {
                 let subdomain: String = row.get(9)?;
                 Ok((
                     shared_with_emails,
-                    subdomain,
+                    subdomain.clone(),
                     MarketShareView {
                         router_id: router_id.to_string(),
                         share_id: share_id.clone(),
+                        subdomain: subdomain.clone(),
                         installation_id: row.get(1)?,
                         share_name: row.get(2)?,
                         owner_email: row.get(3)?,
@@ -2764,6 +2812,86 @@ fn upsert_share_request_log_tx(
     Ok(())
 }
 
+fn validate_market_request_log(log: &MarketRequestLogEntry) -> Result<(), AppError> {
+    if !is_valid_request_id(&log.request_id) {
+        return Err(AppError::BadRequest("invalid market request id".into()));
+    }
+    if log.status.trim().is_empty() || log.status.len() > 40 {
+        return Err(AppError::BadRequest("invalid market request status".into()));
+    }
+    Ok(())
+}
+
+fn is_valid_request_id(value: &str) -> bool {
+    (8..=80).contains(&value.len())
+        && value.starts_with("req_")
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
+fn upsert_market_request_log_tx(
+    conn: &Connection,
+    market: &MarketRegistryRecord,
+    log: MarketRequestLogEntry,
+) -> Result<(), AppError> {
+    let synced_at = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO market_request_logs (
+            request_id, market_id, market_email, market_subdomain, user_email, api_key_prefix,
+            router_id, share_id, share_subdomain, model, status, status_code, latency_ms,
+            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            usage_amount_usd, created_at, settled_at, synced_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+        ON CONFLICT(request_id) DO UPDATE SET
+            market_id = excluded.market_id,
+            market_email = excluded.market_email,
+            market_subdomain = excluded.market_subdomain,
+            user_email = COALESCE(excluded.user_email, market_request_logs.user_email),
+            api_key_prefix = COALESCE(excluded.api_key_prefix, market_request_logs.api_key_prefix),
+            router_id = COALESCE(excluded.router_id, market_request_logs.router_id),
+            share_id = COALESCE(excluded.share_id, market_request_logs.share_id),
+            share_subdomain = COALESCE(excluded.share_subdomain, market_request_logs.share_subdomain),
+            model = COALESCE(excluded.model, market_request_logs.model),
+            status = excluded.status,
+            status_code = COALESCE(excluded.status_code, market_request_logs.status_code),
+            latency_ms = COALESCE(excluded.latency_ms, market_request_logs.latency_ms),
+            input_tokens = excluded.input_tokens,
+            output_tokens = excluded.output_tokens,
+            cache_read_tokens = excluded.cache_read_tokens,
+            cache_creation_tokens = excluded.cache_creation_tokens,
+            usage_amount_usd = COALESCE(excluded.usage_amount_usd, market_request_logs.usage_amount_usd),
+            created_at = excluded.created_at,
+            settled_at = COALESCE(excluded.settled_at, market_request_logs.settled_at),
+            synced_at = excluded.synced_at",
+        params![
+            log.request_id,
+            market.id,
+            market.email,
+            market.subdomain,
+            log.user_email,
+            log.api_key_prefix,
+            log.router_id,
+            log.share_id,
+            log.share_subdomain,
+            log.model,
+            log.status,
+            log.status_code.map(i64::from),
+            log.latency_ms.map(|value| value as i64),
+            i64::from(log.input_tokens),
+            i64::from(log.output_tokens),
+            i64::from(log.cache_read_tokens),
+            i64::from(log.cache_creation_tokens),
+            log.usage_amount_usd,
+            log.created_at,
+            log.settled_at,
+            synced_at,
+        ],
+    )
+    .map_err(|e| AppError::Internal(format!("upsert market request log failed: {e}")))?;
+    Ok(())
+}
+
 fn init_schema(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
         "
@@ -2952,6 +3080,30 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS market_request_logs (
+            request_id TEXT PRIMARY KEY,
+            market_id TEXT NOT NULL,
+            market_email TEXT NOT NULL,
+            market_subdomain TEXT NOT NULL,
+            user_email TEXT,
+            api_key_prefix TEXT,
+            router_id TEXT,
+            share_id TEXT,
+            share_subdomain TEXT,
+            model TEXT,
+            status TEXT NOT NULL,
+            status_code INTEGER,
+            latency_ms INTEGER,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            usage_amount_usd TEXT,
+            created_at TEXT NOT NULL,
+            settled_at TEXT,
+            synced_at TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_leases_installation_id ON leases(installation_id);
         CREATE INDEX IF NOT EXISTS idx_leases_subdomain ON leases(subdomain);
         CREATE INDEX IF NOT EXISTS idx_shares_installation_id ON shares(installation_id);
@@ -2969,9 +3121,26 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
         CREATE INDEX IF NOT EXISTS idx_router_markets_subdomain ON router_markets(subdomain);
         CREATE INDEX IF NOT EXISTS idx_market_notification_emails_market_created ON market_notification_emails(market_email, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_market_notification_emails_to_created ON market_notification_emails(to_email, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_market_request_logs_market_created ON market_request_logs(market_email, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_market_request_logs_share_created ON market_request_logs(share_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_market_request_logs_created ON market_request_logs(created_at DESC);
         ",
     )
     .map_err(|e| AppError::Internal(format!("init schema failed: {e}")))?;
+    conn.execute(
+        "UPDATE router_markets
+            SET scopes_json = '[\"market:shares:read\",\"market:proxy:use\",\"market:email:notify\",\"market:request_logs:write\"]'
+          WHERE scopes_json = '[]'",
+        [],
+    )
+    .map_err(|e| AppError::Internal(format!("backfill empty market scopes failed: {e}")))?;
+    conn.execute(
+        "UPDATE router_markets
+            SET scopes_json = replace(scopes_json, ']', ',\"market:request_logs:write\"]')
+          WHERE instr(scopes_json, 'market:request_logs:write') = 0",
+        [],
+    )
+    .map_err(|e| AppError::Internal(format!("backfill market request log scope failed: {e}")))?;
     let columns = conn
         .prepare("PRAGMA table_info(installations)")
         .and_then(|mut stmt| {
@@ -3840,6 +4009,52 @@ fn list_recent_share_request_logs(
     Ok(deduplicate_recent_share_request_logs(logs))
 }
 
+fn list_recent_market_request_logs(
+    conn: &Connection,
+    limit: usize,
+) -> Result<Vec<DashboardMarketRequestLogView>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT request_id, market_id, market_email, market_subdomain, user_email,
+                    api_key_prefix, router_id, share_id, share_subdomain, model, status,
+                    status_code, latency_ms, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, usage_amount_usd, created_at, settled_at
+             FROM market_request_logs
+             ORDER BY created_at DESC
+             LIMIT ?1",
+        )
+        .map_err(|e| {
+            AppError::Internal(format!("prepare recent market request logs failed: {e}"))
+        })?;
+    let rows = stmt
+        .query_map(params![limit as i64], |row| {
+            Ok(DashboardMarketRequestLogView {
+                request_id: row.get(0)?,
+                market_id: row.get(1)?,
+                market_email: row.get(2)?,
+                market_subdomain: row.get(3)?,
+                user_email: row.get(4)?,
+                api_key_prefix: row.get(5)?,
+                router_id: row.get(6)?,
+                share_id: row.get(7)?,
+                share_subdomain: row.get(8)?,
+                model: row.get(9)?,
+                status: row.get(10)?,
+                status_code: row.get::<_, Option<i64>>(11)?.map(|value| value as u16),
+                latency_ms: row.get::<_, Option<i64>>(12)?.map(|value| value as u64),
+                input_tokens: row.get::<_, i64>(13)? as u32,
+                output_tokens: row.get::<_, i64>(14)? as u32,
+                cache_read_tokens: row.get::<_, i64>(15)? as u32,
+                cache_creation_tokens: row.get::<_, i64>(16)? as u32,
+                usage_amount_usd: row.get(17)?,
+                created_at: row.get(18)?,
+                settled_at: row.get(19)?,
+            })
+        })
+        .map_err(|e| AppError::Internal(format!("query recent market request logs failed: {e}")))?;
+    collect_rows(rows)
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct RecentShareLogFingerprint {
     share_id: String,
@@ -4107,10 +4322,15 @@ fn get_market_by_email(
 fn list_dashboard_markets(
     conn: &Connection,
     active_subdomains: &HashSet<String>,
+    shares: &[(String, ShareDescriptor)],
+    inflight_by_share: &HashMap<String, usize>,
+    online_by_share: &HashMap<String, usize>,
+    market_logs_by_market: &HashMap<String, Vec<DashboardMarketRequestLogView>>,
 ) -> Result<Vec<DashboardMarketView>, AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, display_name, email, subdomain, public_base_url, status
+            "SELECT id, display_name, email, subdomain, public_base_url, status,
+                    created_at, updated_at, last_seen_at, offline_since
              FROM router_markets
              WHERE status IN ('active', 'offline', 'disabled')
              ORDER BY display_name ASC, subdomain ASC",
@@ -4126,11 +4346,115 @@ fn list_dashboard_markets(
                 public_base_url: row.get(4)?,
                 status: row.get(5)?,
                 online: active_subdomains.contains(&subdomain),
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                last_seen_at: row.get(8)?,
+                offline_since: row.get(9)?,
+                share_count: 0,
+                online_share_count: 0,
+                active_requests: 0,
+                parallel_capacity: 0,
+                avg_online_rate_24h: 0.0,
+                linked_shares: Vec::new(),
+                recent_requests: Vec::new(),
                 subdomain,
             })
         })
         .map_err(|e| AppError::Internal(format!("query dashboard markets failed: {e}")))?;
-    collect_rows(rows)
+    let mut markets = collect_rows(rows)?;
+    for market in &mut markets {
+        enrich_dashboard_market(
+            market,
+            shares,
+            active_subdomains,
+            inflight_by_share,
+            online_by_share,
+            market_logs_by_market,
+        );
+    }
+    Ok(markets)
+}
+
+fn enrich_dashboard_market(
+    market: &mut DashboardMarketView,
+    shares: &[(String, ShareDescriptor)],
+    active_subdomains: &HashSet<String>,
+    inflight_by_share: &HashMap<String, usize>,
+    online_by_share: &HashMap<String, usize>,
+    market_logs_by_market: &HashMap<String, Vec<DashboardMarketRequestLogView>>,
+) {
+    let market_email = market.email.to_ascii_lowercase();
+    let mut linked_shares = shares
+        .iter()
+        .filter_map(|(_, share)| {
+            if share.for_sale != "Yes"
+                || !share
+                    .shared_with_emails
+                    .iter()
+                    .any(|email| email.eq_ignore_ascii_case(&market_email))
+            {
+                return None;
+            }
+            let active_requests = inflight_by_share.get(&share.share_id).copied().unwrap_or(0);
+            let online =
+                share.share_status == "active" && active_subdomains.contains(&share.subdomain);
+            let online_minutes_24h = online_by_share.get(&share.share_id).copied().unwrap_or(0);
+            let online_rate_24h =
+                ((online_minutes_24h as f64 / ONLINE_WINDOW_MINUTES as f64) * 100.0).min(100.0);
+            Some(MarketLinkedShareView {
+                share_id: share.share_id.clone(),
+                share_name: share.share_name.clone(),
+                owner_email: share.owner_email.clone(),
+                app_type: share.app_type.clone(),
+                online,
+                active_requests,
+                parallel_limit: share.parallel_limit,
+                online_rate_24h,
+                support: share.support.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    linked_shares.sort_by(|left, right| {
+        right
+            .online
+            .cmp(&left.online)
+            .then_with(|| right.active_requests.cmp(&left.active_requests))
+            .then_with(|| {
+                left.share_name
+                    .to_ascii_lowercase()
+                    .cmp(&right.share_name.to_ascii_lowercase())
+            })
+    });
+
+    market.share_count = linked_shares.len();
+    market.online_share_count = linked_shares.iter().filter(|share| share.online).count();
+    market.active_requests = linked_shares
+        .iter()
+        .map(|share| share.active_requests)
+        .sum::<usize>();
+    market.parallel_capacity = if linked_shares.iter().any(|share| share.parallel_limit < 0) {
+        -1
+    } else {
+        linked_shares
+            .iter()
+            .map(|share| share.parallel_limit.max(0))
+            .sum()
+    };
+    market.avg_online_rate_24h = if linked_shares.is_empty() {
+        0.0
+    } else {
+        linked_shares
+            .iter()
+            .map(|share| share.online_rate_24h)
+            .sum::<f64>()
+            / linked_shares.len() as f64
+    };
+    market.linked_shares = linked_shares;
+    market.recent_requests = market_logs_by_market
+        .get(&market.email.to_ascii_lowercase())
+        .cloned()
+        .unwrap_or_default();
 }
 
 fn dashboard_market_to_share_link(market: &DashboardMarketView) -> ShareMarketLinkView {

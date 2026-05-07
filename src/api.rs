@@ -17,13 +17,13 @@ use crate::models::{
     DashboardPresenceRequest, DashboardPresenceResponse, DashboardResponse,
     GetInstallationOwnerEmailQuery, GetInstallationOwnerEmailResponse, HealthResponse,
     IssueLeaseRequest, IssueLeaseResponse, MarketNotificationEmailLogView,
-    MarketNotificationEmailRequest, MarketNotificationEmailResponse, MarketShareView,
-    MarketsResponse, PublicMapPointsResponse, RefreshSessionRequest, RegisterInstallationRequest,
-    RegisterInstallationResponse, RegisterMarketRequest, RequestEmailCodeRequest,
-    RequestEmailCodeResponse, SessionStatusResponse, ShareBatchSyncRequest,
-    ShareClaimSubdomainRequest, ShareDeleteRequest, ShareHeartbeatRequest,
-    ShareRequestLogBatchSyncRequest, ShareRuntimeRefreshRequest, ShareSyncRequest,
-    VerifyEmailCodeRequest, VerifyEmailCodeResponse,
+    MarketNotificationEmailRequest, MarketNotificationEmailResponse,
+    MarketRequestLogBatchSyncRequest, MarketShareView, MarketsResponse, PublicMapPointsResponse,
+    RefreshSessionRequest, RegisterInstallationRequest, RegisterInstallationResponse,
+    RegisterMarketRequest, RequestEmailCodeRequest, RequestEmailCodeResponse,
+    SessionStatusResponse, ShareBatchSyncRequest, ShareClaimSubdomainRequest, ShareDeleteRequest,
+    ShareHeartbeatRequest, ShareRequestLogBatchSyncRequest, ShareRuntimeRefreshRequest,
+    ShareSyncRequest, VerifyEmailCodeRequest, VerifyEmailCodeResponse,
 };
 use crate::proxy::{market_proxy_handler, proxy_handler};
 use crate::recent_traffic::{RecentRequestEvent, RecentTrafficSnapshot};
@@ -53,6 +53,10 @@ pub fn router(state: ServerState) -> Router {
         .route("/v1/markets", get(markets))
         .route("/v1/markets/register", post(register_market))
         .route("/v1/market/shares", get(market_shares))
+        .route(
+            "/v1/market/request-logs/batch",
+            post(batch_sync_market_request_logs),
+        )
         .route(
             "/v1/market/notifications/email",
             post(send_market_notification_email),
@@ -138,6 +142,19 @@ async fn market_shares(
         )
         .await?;
     Ok(Json(shares))
+}
+
+async fn batch_sync_market_request_logs(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Json(input): Json<MarketRequestLogBatchSyncRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let market = authenticate_market(&state, &headers, "market:request_logs:write").await?;
+    let count = state
+        .store
+        .batch_sync_market_request_logs(&market, input)
+        .await?;
+    Ok(Json(serde_json::json!({ "ok": true, "synced": count })))
 }
 
 async fn issue_market_lease(

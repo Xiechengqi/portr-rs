@@ -11,6 +11,8 @@ use tracing::{debug, info, warn};
 use crate::ServerState;
 use crate::recent_traffic::RecentTraffic;
 
+const MARKET_REQUEST_ID_HEADER: &str = "x-cc-switch-market-request-id";
+
 /// Per-subdomain routing info.
 #[derive(Debug, Clone)]
 pub(crate) struct RouteEntry {
@@ -312,6 +314,7 @@ pub async fn market_proxy_handler(
         if n.eq_ignore_ascii_case("host")
             || n.eq_ignore_ascii_case("authorization")
             || n.eq_ignore_ascii_case("x-share-token")
+            || n.eq_ignore_ascii_case(MARKET_REQUEST_ID_HEADER)
             || is_hop_by_hop_header(n)
         {
             continue;
@@ -371,17 +374,37 @@ pub async fn market_proxy_handler(
         None
     };
 
-    let live_request_id = Some(
+    let live_request_id = if let Some(request_id) =
+        header_str(&parts.headers, MARKET_REQUEST_ID_HEADER)
+            .split_whitespace()
+            .next()
+            .filter(|value| is_valid_market_request_id(value))
+            .map(ToOwned::to_owned)
+    {
         state
             .recent_traffic
-            .record(
+            .record_with_id(
+                request_id.clone(),
                 share_id.clone(),
                 route.share_name.clone(),
                 Some(route.subdomain.clone()),
                 client_metadata.country_code.clone(),
             )
-            .await,
-    );
+            .await;
+        Some(request_id)
+    } else {
+        Some(
+            state
+                .recent_traffic
+                .record(
+                    share_id.clone(),
+                    route.share_name.clone(),
+                    Some(route.subdomain.clone()),
+                    client_metadata.country_code.clone(),
+                )
+                .await,
+        )
+    };
     if let Some(ref request_id) = live_request_id {
         builder = builder.header("X-CC-Switch-Request-Id", request_id.as_str());
     }
@@ -759,7 +782,7 @@ pub async fn proxy_handler(
 
     let status = upstream.status();
     let response_headers = upstream.headers().clone();
-    if status == StatusCode::UNAUTHORIZED && is_abuse_tracked_api_path(&path) {
+    if is_invalid_auth_status(status) && is_abuse_tracked_api_path(&path) {
         if let Some(decision) = state.abuse.record_invalid_auth(&user_ip).await {
             warn!(
                 method = %method,
@@ -893,6 +916,10 @@ fn is_abuse_tracked_api_path(path: &str) -> bool {
         path,
         "/v1/chat/completions" | "/v1/responses" | "/v1/messages" | "/v1/completions"
     )
+}
+
+fn is_invalid_auth_status(status: StatusCode) -> bool {
+    matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
 }
 
 fn is_allowed_direct_share_proxy_path(path: &str) -> bool {
@@ -1101,6 +1128,14 @@ fn mask_token(token: &str) -> String {
         return "*".repeat(token.len());
     }
     format!("{}...{}", &token[..4], &token[token.len() - 4..])
+}
+
+fn is_valid_market_request_id(value: &str) -> bool {
+    (8..=80).contains(&value.len())
+        && value.starts_with("req_")
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
 }
 
 fn subdomain_for_host(host: &str, tunnel_domain: &str) -> Option<String> {
