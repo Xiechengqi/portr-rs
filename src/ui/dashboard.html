@@ -832,6 +832,14 @@
       .page-footer .sep {
         opacity: 0.5;
       }
+      .page-footer a {
+        color: var(--muted-foreground);
+        text-decoration: none;
+        transition: color 0.2s ease;
+      }
+      .page-footer a:hover {
+        color: var(--accent);
+      }
 
       /* ── Section labels ── */
       .section { margin-top: 0; }
@@ -1577,6 +1585,8 @@
         <span>Page Online <strong id="page-online-count">0</strong></span>
         <span class="sep">|</span>
         <span>EMAIL SENT 24H <strong id="email-sent-24h">0</strong></span>
+        <span class="sep">|</span>
+        <a href="https://github.com/Xiechengqi/cc-switch-router" target="_blank" rel="noopener noreferrer">GitHub</a>
       </footer>
     </main>
 
