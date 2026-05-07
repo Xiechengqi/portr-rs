@@ -977,6 +977,39 @@
         text-decoration: none;
       }
       .market-list-item a:hover { color: var(--accent); }
+      .market-linked-share {
+        align-items: flex-start;
+      }
+      .market-linked-share-title {
+        display: block;
+        font-size: 0.92rem;
+        line-height: 1.25;
+      }
+      .market-linked-share-meta {
+        display: block;
+      }
+      .market-linked-share-side {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 6px;
+        max-width: 52%;
+      }
+      .market-linked-share-support {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 4px;
+      }
+      .market-linked-share-support span {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 3px 7px;
+        font: 10px/1 "JetBrains Mono", monospace;
+        color: var(--muted-foreground);
+        background: var(--background);
+      }
       .status-stack {
         display: grid;
         gap: 8px;
@@ -3375,20 +3408,28 @@
         if (!shares.length) {
           return '<div class="empty"><div class="empty-icon"></div>No authorized shares</div>';
         }
-        return `<div class="market-list">${shares.map((share) => `
-          <div class="item-card market-list-item">
-            <div>
-              <strong>${escapeHtml(share.subdomain || share.shareName || share.shareId || "-")}</strong>
-              <div class="item-card-meta">
-                <span>${escapeHtml(share.ownerEmail || "-")}</span>
+        return `<div class="market-list">${shares.map((share) => {
+          const supportedApps = [
+            ["claude", "Claude"],
+            ["codex", "Codex"],
+            ["gemini", "Gemini"],
+          ].filter(([key]) => share.support?.[key]);
+          const supportHtml = supportedApps.length
+            ? `<div class="market-linked-share-support">${supportedApps.map(([, label]) => `<span>${label}</span>`).join("")}</div>`
+            : "";
+          return `
+            <div class="item-card market-list-item market-linked-share">
+              <div>
+                <strong class="market-linked-share-title">${escapeHtml(share.subdomain || "-")}</strong>
+                <div class="item-card-meta market-linked-share-meta">${escapeHtml(share.ownerEmail || "-")}</div>
+              </div>
+              <div class="market-linked-share-side">
+                <span class="badge ${share.online ? "badge--online" : "badge--offline"}">${share.online ? "Online" : "Offline"}</span>
+                ${supportHtml}
               </div>
             </div>
-            <div style="display:grid;justify-items:end;gap:6px">
-              <span class="badge ${share.online ? "badge--online" : "badge--offline"}">${share.online ? "Online" : "Offline"}</span>
-              ${supportPills(share.support || {}, null)}
-            </div>
-          </div>
-        `).join("")}</div>`;
+          `;
+        }).join("")}</div>`;
       }
 
       function marketRecentRequestList(market) {
