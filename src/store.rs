@@ -2766,10 +2766,11 @@ fn upsert_share_request_log_tx(
     conn.execute(
         "INSERT INTO share_request_logs (
             request_id, installation_id, share_id, share_name, provider_id, provider_name,
-            app_type, model, request_model, status_code, latency_ms, first_token_ms,
+            app_type, model, request_model, request_agent, requested_model, actual_model, actual_model_source,
+            status_code, latency_ms, first_token_ms,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             is_streaming, session_id, created_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
         ON CONFLICT(request_id) DO UPDATE SET
             installation_id = excluded.installation_id,
             share_id = excluded.share_id,
@@ -2779,6 +2780,10 @@ fn upsert_share_request_log_tx(
             app_type = excluded.app_type,
             model = excluded.model,
             request_model = excluded.request_model,
+            request_agent = excluded.request_agent,
+            requested_model = excluded.requested_model,
+            actual_model = excluded.actual_model,
+            actual_model_source = excluded.actual_model_source,
             status_code = excluded.status_code,
             latency_ms = excluded.latency_ms,
             first_token_ms = excluded.first_token_ms,
@@ -2799,6 +2804,10 @@ fn upsert_share_request_log_tx(
             log.app_type,
             log.model,
             log.request_model,
+            log.request_agent,
+            log.requested_model,
+            log.actual_model,
+            log.actual_model_source,
             i64::from(log.status_code),
             log.latency_ms as i64,
             log.first_token_ms.map(|v| v as i64),
@@ -2842,10 +2851,11 @@ fn upsert_market_request_log_tx(
     conn.execute(
         "INSERT INTO market_request_logs (
             request_id, market_id, market_email, market_subdomain, user_email, api_key_prefix,
-            router_id, share_id, share_subdomain, model, status, status_code, latency_ms,
+            router_id, share_id, share_subdomain, model, request_agent, requested_model, actual_model, actual_model_source,
+            status, status_code, latency_ms,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             usage_amount_usd, created_at, settled_at, synced_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
         ON CONFLICT(request_id) DO UPDATE SET
             market_id = excluded.market_id,
             market_email = excluded.market_email,
@@ -2856,6 +2866,10 @@ fn upsert_market_request_log_tx(
             share_id = COALESCE(excluded.share_id, market_request_logs.share_id),
             share_subdomain = COALESCE(excluded.share_subdomain, market_request_logs.share_subdomain),
             model = COALESCE(excluded.model, market_request_logs.model),
+            request_agent = excluded.request_agent,
+            requested_model = excluded.requested_model,
+            actual_model = excluded.actual_model,
+            actual_model_source = excluded.actual_model_source,
             status = excluded.status,
             status_code = COALESCE(excluded.status_code, market_request_logs.status_code),
             latency_ms = COALESCE(excluded.latency_ms, market_request_logs.latency_ms),
@@ -2878,6 +2892,10 @@ fn upsert_market_request_log_tx(
             log.share_id,
             log.share_subdomain,
             log.model,
+            log.request_agent,
+            log.requested_model,
+            log.actual_model,
+            log.actual_model_source,
             log.status,
             log.status_code.map(i64::from),
             log.latency_ms.map(|value| value as i64),
@@ -2977,6 +2995,10 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             app_type TEXT NOT NULL,
             model TEXT NOT NULL,
             request_model TEXT NOT NULL,
+            request_agent TEXT NOT NULL DEFAULT '',
+            requested_model TEXT NOT NULL DEFAULT '',
+            actual_model TEXT NOT NULL DEFAULT '',
+            actual_model_source TEXT NOT NULL DEFAULT '',
             status_code INTEGER NOT NULL,
             latency_ms INTEGER NOT NULL,
             first_token_ms INTEGER,
@@ -3094,6 +3116,10 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             share_id TEXT,
             share_subdomain TEXT,
             model TEXT,
+            request_agent TEXT NOT NULL DEFAULT '',
+            requested_model TEXT NOT NULL DEFAULT '',
+            actual_model TEXT NOT NULL DEFAULT '',
+            actual_model_source TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL,
             status_code INTEGER,
             latency_ms INTEGER,
@@ -3403,6 +3429,54 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
         [],
     )
     .map_err(|e| AppError::Internal(format!("create subdomain unique index failed: {e}")))?;
+    add_column_if_missing(
+        conn,
+        "share_request_logs",
+        "request_agent",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column_if_missing(
+        conn,
+        "share_request_logs",
+        "requested_model",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column_if_missing(
+        conn,
+        "share_request_logs",
+        "actual_model",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column_if_missing(
+        conn,
+        "share_request_logs",
+        "actual_model_source",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column_if_missing(
+        conn,
+        "market_request_logs",
+        "request_agent",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column_if_missing(
+        conn,
+        "market_request_logs",
+        "requested_model",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column_if_missing(
+        conn,
+        "market_request_logs",
+        "actual_model",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    add_column_if_missing(
+        conn,
+        "market_request_logs",
+        "actual_model_source",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
     conn.execute(
         "UPDATE installations
          SET owner_email = (
@@ -3426,6 +3500,30 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
         [],
     )
     .map_err(|e| AppError::Internal(format!("backfill installation owner email failed: {e}")))?;
+    Ok(())
+}
+
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), AppError> {
+    let sql = format!("PRAGMA table_info({table})");
+    let columns = conn
+        .prepare(&sql)
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|e| AppError::Internal(format!("inspect {table} schema failed: {e}")))?;
+    if !columns.iter().any(|name| name == column) {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )
+        .map_err(|e| AppError::Internal(format!("add {table}.{column} failed: {e}")))?;
+    }
     Ok(())
 }
 
@@ -3969,12 +4067,14 @@ fn list_recent_share_request_logs(
     let mut stmt = conn
         .prepare(
             "SELECT request_id, share_id, share_name, provider_id, provider_name, app_type, model,
-                    request_model, status_code, latency_ms, first_token_ms, input_tokens,
+                    request_model, request_agent, requested_model, actual_model, actual_model_source,
+                    status_code, latency_ms, first_token_ms, input_tokens,
                     output_tokens, cache_read_tokens, cache_creation_tokens, is_streaming,
                     session_id, created_at
              FROM (
                  SELECT request_id, share_id, share_name, provider_id, provider_name, app_type, model,
-                        request_model, status_code, latency_ms, first_token_ms, input_tokens,
+                        request_model, request_agent, requested_model, actual_model, actual_model_source,
+                        status_code, latency_ms, first_token_ms, input_tokens,
                         output_tokens, cache_read_tokens, cache_creation_tokens, is_streaming,
                         session_id, created_at,
                         ROW_NUMBER() OVER (PARTITION BY share_id ORDER BY created_at DESC) AS row_num
@@ -3995,16 +4095,20 @@ fn list_recent_share_request_logs(
                 app_type: row.get(5)?,
                 model: row.get(6)?,
                 request_model: row.get(7)?,
-                status_code: row.get::<_, i64>(8)? as u16,
-                latency_ms: row.get::<_, i64>(9)? as u64,
-                first_token_ms: row.get::<_, Option<i64>>(10)?.map(|v| v as u64),
-                input_tokens: row.get::<_, i64>(11)? as u32,
-                output_tokens: row.get::<_, i64>(12)? as u32,
-                cache_read_tokens: row.get::<_, i64>(13)? as u32,
-                cache_creation_tokens: row.get::<_, i64>(14)? as u32,
-                is_streaming: row.get::<_, i64>(15)? != 0,
-                session_id: row.get(16)?,
-                created_at: row.get(17)?,
+                request_agent: row.get(8)?,
+                requested_model: row.get(9)?,
+                actual_model: row.get(10)?,
+                actual_model_source: row.get(11)?,
+                status_code: row.get::<_, i64>(12)? as u16,
+                latency_ms: row.get::<_, i64>(13)? as u64,
+                first_token_ms: row.get::<_, Option<i64>>(14)?.map(|v| v as u64),
+                input_tokens: row.get::<_, i64>(15)? as u32,
+                output_tokens: row.get::<_, i64>(16)? as u32,
+                cache_read_tokens: row.get::<_, i64>(17)? as u32,
+                cache_creation_tokens: row.get::<_, i64>(18)? as u32,
+                is_streaming: row.get::<_, i64>(19)? != 0,
+                session_id: row.get(20)?,
+                created_at: row.get(21)?,
             })
         })
         .map_err(|e| AppError::Internal(format!("query recent share request logs failed: {e}")))?;
@@ -4019,7 +4123,8 @@ fn list_recent_market_request_logs(
     let mut stmt = conn
         .prepare(
             "SELECT request_id, market_id, market_email, market_subdomain, user_email,
-                    api_key_prefix, router_id, share_id, share_subdomain, model, status,
+                    api_key_prefix, router_id, share_id, share_subdomain, model,
+                    request_agent, requested_model, actual_model, actual_model_source, status,
                     status_code, latency_ms, input_tokens, output_tokens, cache_read_tokens,
                     cache_creation_tokens, usage_amount_usd, created_at, settled_at
              FROM market_request_logs
@@ -4042,16 +4147,20 @@ fn list_recent_market_request_logs(
                 share_id: row.get(7)?,
                 share_subdomain: row.get(8)?,
                 model: row.get(9)?,
-                status: row.get(10)?,
-                status_code: row.get::<_, Option<i64>>(11)?.map(|value| value as u16),
-                latency_ms: row.get::<_, Option<i64>>(12)?.map(|value| value as u64),
-                input_tokens: row.get::<_, i64>(13)? as u32,
-                output_tokens: row.get::<_, i64>(14)? as u32,
-                cache_read_tokens: row.get::<_, i64>(15)? as u32,
-                cache_creation_tokens: row.get::<_, i64>(16)? as u32,
-                usage_amount_usd: row.get(17)?,
-                created_at: row.get(18)?,
-                settled_at: row.get(19)?,
+                request_agent: row.get(10)?,
+                requested_model: row.get(11)?,
+                actual_model: row.get(12)?,
+                actual_model_source: row.get(13)?,
+                status: row.get(14)?,
+                status_code: row.get::<_, Option<i64>>(15)?.map(|value| value as u16),
+                latency_ms: row.get::<_, Option<i64>>(16)?.map(|value| value as u64),
+                input_tokens: row.get::<_, i64>(17)? as u32,
+                output_tokens: row.get::<_, i64>(18)? as u32,
+                cache_read_tokens: row.get::<_, i64>(19)? as u32,
+                cache_creation_tokens: row.get::<_, i64>(20)? as u32,
+                usage_amount_usd: row.get(21)?,
+                created_at: row.get(22)?,
+                settled_at: row.get(23)?,
             })
         })
         .map_err(|e| AppError::Internal(format!("query recent market request logs failed: {e}")))?;
@@ -6519,6 +6628,10 @@ mod tests {
             app_type: "codex".into(),
             model: "gpt-5".into(),
             request_model: "gpt-5".into(),
+            request_agent: "codex".into(),
+            requested_model: "gpt-5".into(),
+            actual_model: "gpt-5".into(),
+            actual_model_source: "official".into(),
             status_code: 200,
             latency_ms: 1234,
             first_token_ms: Some(222),

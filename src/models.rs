@@ -292,6 +292,10 @@ pub struct MarketRequestLogEntry {
     pub share_subdomain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    pub request_agent: String,
+    pub requested_model: String,
+    pub actual_model: String,
+    pub actual_model_source: String,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_code: Option<u16>,
@@ -331,6 +335,10 @@ pub struct DashboardMarketRequestLogView {
     pub share_subdomain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    pub request_agent: String,
+    pub requested_model: String,
+    pub actual_model: String,
+    pub actual_model_source: String,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_code: Option<u16>,
@@ -388,6 +396,10 @@ pub struct ShareRequestLogEntry {
     pub app_type: String,
     pub model: String,
     pub request_model: String,
+    pub request_agent: String,
+    pub requested_model: String,
+    pub actual_model: String,
+    pub actual_model_source: String,
     pub status_code: u16,
     pub latency_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -2378,11 +2378,16 @@
         const shareMeta = _shareMetaById.get(event.shareId) || null;
         const requestMeta = _requestMetaById.get(event.requestId) || null;
         const subdomain = event.shareSubdomain || shareMeta?.subdomain || event.shareName || shareMeta?.shareName || shareMeta?.platform || "share";
-        const modelName = requestMeta?.requestModel || requestMeta?.model || "-";
+        const agent = requestMeta?.requestAgent || "";
+        const requestedModel = requestMeta?.requestedModel || requestMeta?.requestModel || "";
+        const actualModel = requestMeta?.actualModel || requestMeta?.model || "";
+        const modelName = [agent, actualModel || requestedModel || "-"].filter(Boolean).join(" · ");
         const status = requestMeta?.statusCode ?? "-";
         const details = [
           requestMeta?.userEmail || "",
-          modelName,
+          requestedModel && actualModel && requestedModel !== actualModel
+            ? `${agent || "agent"}:${requestedModel} → ${actualModel}`
+            : modelName,
           status,
           formatTickerLatency(requestMeta?.latencyMs),
           formatTickerTokens(requestMeta),
@@ -2634,6 +2639,10 @@
               shareId: req.shareId || shareId,
               model: req.model || "",
               requestModel: req.requestModel || "",
+              requestAgent: req.requestAgent || req.appType || "",
+              requestedModel: req.requestedModel || req.requestModel || "",
+              actualModel: req.actualModel || req.model || "",
+              actualModelSource: req.actualModelSource || "",
               statusCode: req.statusCode,
               latencyMs: req.latencyMs,
               inputTokens: req.inputTokens || 0,
@@ -2652,6 +2661,10 @@
               shareId,
               model: latest?.model || "",
               requestModel: latest?.requestModel || "",
+              requestAgent: latest?.requestAgent || latest?.appType || "",
+              requestedModel: latest?.requestedModel || latest?.requestModel || "",
+              actualModel: latest?.actualModel || latest?.model || "",
+              actualModelSource: latest?.actualModelSource || "",
               statusCode: latest?.statusCode,
               latencyMs: latest?.latencyMs,
               inputTokens: latest?.inputTokens || 0,
@@ -2669,6 +2682,10 @@
             shareId: existing.shareId || log.shareId || "",
             model: existing.model || log.model || "",
             requestModel: existing.requestModel || log.model || "",
+            requestAgent: existing.requestAgent || log.requestAgent || "",
+            requestedModel: existing.requestedModel || log.requestedModel || log.model || "",
+            actualModel: existing.actualModel || log.actualModel || log.model || "",
+            actualModelSource: existing.actualModelSource || log.actualModelSource || "",
             statusCode: existing.statusCode || log.statusCode || log.status || "",
             latencyMs: existing.latencyMs || log.latencyMs || 0,
             inputTokens: existing.inputTokens || log.inputTokens || 0,
@@ -3503,10 +3520,11 @@
         return logs.slice(0, 20).map((log) => {
           const total = totalTokens(log);
           const status = log.statusCode || log.status || "-";
+          const modelText = [log.requestAgent || "", log.actualModel || log.model || "-"].filter(Boolean).join(" · ");
           const parts = [
             log.userEmail || "-",
             log.shareSubdomain || log.shareId || "-",
-            log.model || "-",
+            modelText,
             status,
             formatTickerLatency(log.latencyMs),
             `${formatCompactTokenCount(total)} tokens`,
@@ -3655,9 +3673,10 @@
             <div class="item-card">
               <div class="item-card-top">
                 <div>
-                  <strong>${log.model || log.requestModel || "-"}</strong>
+                  <strong>${escapeHtml([log.requestAgent || log.appType || "", log.actualModel || log.model || "-"].filter(Boolean).join(" · "))}</strong>
                   <div class="item-card-meta">
                     <span>${log.providerName || log.providerId}</span>
+                    <span>${escapeHtml(log.requestedModel || log.requestModel || "-")}</span>
                     <span title="${fullTime((log.createdAt || 0) * 1000)}">${relTime((log.createdAt || 0) * 1000)}</span>
                     ${log.isStreaming ? '<span>stream</span>' : ""}
                   </div>
