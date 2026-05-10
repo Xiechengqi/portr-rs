@@ -1676,6 +1676,33 @@
         return `${Math.floor(diff / 31536000)}y ago`;
       }
 
+      function timestampMs(value) {
+        if (!value) return null;
+        if (typeof value === "number") {
+          if (!Number.isFinite(value) || value <= 0) return null;
+          return value < 1000000000000 ? value * 1000 : value;
+        }
+        const trimmed = String(value).trim();
+        if (!trimmed) return null;
+        if (/^\d+$/.test(trimmed)) {
+          const numeric = Number(trimmed);
+          if (!Number.isFinite(numeric) || numeric <= 0) return null;
+          return numeric < 1000000000000 ? numeric * 1000 : numeric;
+        }
+        const parsed = Date.parse(trimmed);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function relTimestamp(value) {
+        const ms = timestampMs(value);
+        return ms ? relTime(ms) : "--";
+      }
+
+      function fullTimestamp(value) {
+        const ms = timestampMs(value);
+        return ms ? fullTime(ms) : "";
+      }
+
       function fullTime(value) {
         if (!value) return "";
         const date = new Date(value);
@@ -3536,7 +3563,7 @@
                 <div>
                   <strong>${escapeHtml(parts.join(" · "))}</strong>
                   <div class="item-card-meta">
-                    <span title="${fullTime(log.createdAt)}">${escapeHtml(formatTickerUtcTime(log.createdAt))}</span>
+                    <span title="${fullTimestamp(log.createdAt)}">${escapeHtml(relTimestamp(log.createdAt))}</span>
                     <span>${escapeHtml(log.requestId || "-")}</span>
                   </div>
                 </div>
@@ -3677,7 +3704,7 @@
                   <div class="item-card-meta">
                     <span>${log.providerName || log.providerId}</span>
                     <span>${escapeHtml(log.requestedModel || log.requestModel || "-")}</span>
-                    <span title="${fullTime((log.createdAt || 0) * 1000)}">${relTime((log.createdAt || 0) * 1000)}</span>
+                    <span title="${fullTimestamp(log.createdAt)}">${relTimestamp(log.createdAt)}</span>
                     ${log.isStreaming ? '<span>stream</span>' : ""}
                   </div>
                 </div>
