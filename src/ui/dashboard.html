@@ -1595,7 +1595,7 @@
               <tr>
                 <th>Market</th>
                 <th>Public URL</th>
-                <th>Price</th>
+                <th>?% official price</th>
                 <th>Status</th>
                 <th style="width:28px"></th>
               </tr>
@@ -3463,7 +3463,12 @@
             } else if (typeof value === "string" && value.trim()) {
               display = value.trim().toLowerCase() === "mixed" ? "mixed" : `${value.trim()}%`;
             }
-            return `<div><span class="meta">${escapeHtml(label)}</span> <strong>${escapeHtml(display)}</strong></div>`;
+            return `
+              <div class="status-line">
+                <span class="status-line-label">${escapeHtml(label)}</span>
+                <div class="status-line-value"><strong>${escapeHtml(display)}</strong></div>
+              </div>
+            `;
           })
           .join("");
         return `<div class="status-stack">${lines}</div>`;
