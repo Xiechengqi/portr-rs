@@ -3511,13 +3511,16 @@
         if (!share) return '<span class="meta">—</span>';
         const links = share.marketLinks || [];
         const showRuntimePricing = share.forSale === "Yes";
-        const allMarkets = share.marketAccessMode === "all";
+        const showMarketAccess = share.forSale === "Yes";
+        const allMarkets = showMarketAccess && share.marketAccessMode === "all";
         const marketLines = allMarkets
           ? []
-          : links
+          : showMarketAccess
+            ? links
               .map((market) => market.subdomain || "")
               .filter(Boolean)
-              .map(escapeHtml);
+              .map(escapeHtml)
+            : [];
         return `
           <div class="for-sale-market-stack">
             ${forSalePill(share)}
