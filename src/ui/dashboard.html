@@ -4061,9 +4061,9 @@
         document.getElementById("last-sync").textContent = relTime(data.generatedAt);
         document.getElementById("last-sync").title = fullTime(data.generatedAt);
         const clientFlow = new Map();
-        for (const c of data.clients || []) {
-          const reqs = c?.share?.activeRequests | 0;
-          const id = c?.installation?.id;
+        for (const c of data.map?.clients || []) {
+          const reqs = c?.activeRequests | 0;
+          const id = c?.id;
           if (id && reqs > 0) clientFlow.set(id, reqs);
         }
         rebuildRequestTickerIndexes(data.clients || [], data.tickerShares || [], data.marketRequestLogs || []);
@@ -4073,7 +4073,7 @@
           hasTickerEl: Boolean(document.getElementById("map-ticker")),
         });
         renderMap(data.map || null, clientFlow);
-        applyCountryHeatmap(data.countryCounts || {});
+        applyCountryHeatmap(data.userCountryCounts || data.countryCounts || {});
         processRequestEvents(data.recentRequestEvents || []);
 
         /* section counts */

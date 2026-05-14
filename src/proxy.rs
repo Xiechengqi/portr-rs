@@ -189,6 +189,15 @@ impl ProxyRegistry {
         self.market_limiter.snapshot().await
     }
 
+    #[cfg(test)]
+    pub async fn set_share_inflight_for_test(&self, share_id: &str, count: usize) {
+        for _ in 0..count {
+            if let Some(permit) = self.try_acquire_share_permit(share_id, -1).await {
+                std::mem::forget(permit);
+            }
+        }
+    }
+
     /// Acquire a tracking-only permit for a market-routed request. We pass an
     /// unlimited parallel cap (`-1`) because the rate gate is applied at the
     /// share level; this permit exists purely to drive the dashboard's

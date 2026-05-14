@@ -812,6 +812,8 @@ pub struct DashboardMapPoint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_at: Option<DateTime<Utc>>,
     pub is_active: bool,
+    #[serde(default)]
+    pub active_requests: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

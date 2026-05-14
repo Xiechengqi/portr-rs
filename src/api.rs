@@ -340,12 +340,18 @@ fn confirmed_request_events(
     snapshot: &RecentTrafficSnapshot,
     response: &DashboardResponse,
 ) -> (Vec<RecentRequestEvent>, HashMap<String, usize>) {
-    let request_log_ids = response
+    let mut request_log_ids = response
         .ticker_shares
         .iter()
         .flat_map(|share| share.recent_requests.iter())
         .map(|log| log.request_id.as_str())
         .collect::<HashSet<_>>();
+    request_log_ids.extend(
+        response
+            .market_request_logs
+            .iter()
+            .map(|log| log.request_id.as_str()),
+    );
     let confirmed_events = snapshot
         .events
         .iter()
@@ -523,6 +529,80 @@ async fn world_map_svg(headers: HeaderMap) -> axum::response::Response {
         WORLD_MAP_SVG,
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn confirmed_request_events_accepts_market_request_logs() {
+        let event = RecentRequestEvent {
+            request_id: "req_market_confirmed".into(),
+            share_id: "share-1".into(),
+            share_name: Some("Share".into()),
+            share_subdomain: Some("share-sub".into()),
+            user_country: Some("US".into()),
+            user_country_iso3: Some("USA".into()),
+            started_at: Utc::now(),
+            is_inflight: true,
+        };
+        let snapshot = RecentTrafficSnapshot {
+            country_counts: HashMap::new(),
+            events: vec![event],
+            recent_events: Vec::new(),
+        };
+        let response = DashboardResponse {
+            generated_at: Utc::now(),
+            stats: crate::models::DashboardStats {
+                clients: 0,
+                active_shares: 0,
+                total_active_requests: 0,
+            },
+            map: crate::models::DashboardMap {
+                server: None,
+                clients: Vec::new(),
+            },
+            clients: Vec::new(),
+            markets: Vec::new(),
+            ticker_shares: Vec::new(),
+            country_counts: HashMap::new(),
+            user_country_counts: HashMap::new(),
+            recent_request_events: Vec::new(),
+            market_request_logs: vec![crate::models::DashboardMarketRequestLogView {
+                request_id: "req_market_confirmed".into(),
+                market_id: "market-1".into(),
+                market_email: "market@example.com".into(),
+                market_subdomain: "market".into(),
+                user_email: None,
+                api_key_prefix: None,
+                router_id: None,
+                share_id: Some("share-1".into()),
+                share_subdomain: Some("share-sub".into()),
+                model: Some("gpt-5".into()),
+                request_agent: "codex".into(),
+                requested_model: "gpt-5".into(),
+                actual_model: "gpt-5".into(),
+                actual_model_source: "official".into(),
+                status: "streaming".into(),
+                status_code: Some(200),
+                latency_ms: Some(1),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                usage_amount_usd: None,
+                created_at: Utc::now().to_rfc3339(),
+                settled_at: None,
+            }],
+        };
+
+        let (events, country_counts) = confirmed_request_events(&snapshot, &response);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].request_id, "req_market_confirmed");
+        assert_eq!(country_counts.get("USA"), Some(&1));
+    }
 }
 
 async fn sync_share(

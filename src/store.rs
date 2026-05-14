@@ -1307,6 +1307,12 @@ impl AppStore {
             .unchecked_transaction()
             .map_err(|e| AppError::Internal(format!("begin batch sync tx failed: {e}")))?;
         let bound_owner_email = require_installation_owner_email(&tx, &input.installation_id)?;
+        let upsert_count = input.ops.iter().filter(|op| op.kind == "upsert").count();
+        if upsert_count > 1 {
+            return Err(AppError::BadRequest(
+                "multiple share upserts are not supported for one installation".into(),
+            ));
+        }
         for op in input.ops {
             match op.kind.as_str() {
                 "upsert" => {
@@ -1327,6 +1333,9 @@ impl AppStore {
                         AppError::BadRequest("shareId is required for delete".into())
                     })?;
                     let owner_email = get_share_owner_email(&tx, &share_id)?;
+                    if owner_email.is_none() {
+                        continue;
+                    }
                     if owner_email.as_deref() != Some(bound_owner_email.as_str()) {
                         return Err(AppError::Unauthorized(
                             "only share owner can delete share".into(),
@@ -1339,6 +1348,9 @@ impl AppStore {
                     .map_err(|e| {
                         AppError::Internal(format!("delete share in batch failed: {e}"))
                     })?;
+                }
+                "delete_all" => {
+                    delete_all_shares_for_installation_tx(&tx, &input.installation_id)?;
                 }
                 other => {
                     return Err(AppError::BadRequest(format!(
@@ -1582,6 +1594,7 @@ impl AppStore {
                     lon,
                     last_seen_at: Some(installation.last_seen_at),
                     is_active,
+                    active_requests: 0,
                 });
             }
             installation_views.push(InstallationView {
@@ -1692,6 +1705,19 @@ impl AppStore {
                 }
             })
             .collect::<Vec<_>>();
+        let active_requests_by_installation =
+            share_views
+                .iter()
+                .fold(HashMap::<String, usize>::new(), |mut acc, share| {
+                    *acc.entry(share.installation_id.clone()).or_insert(0) += share.active_requests;
+                    acc
+                });
+        for point in &mut client_map_points {
+            point.active_requests = active_requests_by_installation
+                .get(&point.id)
+                .copied()
+                .unwrap_or(0);
+        }
         let ticker_shares = share_views
             .iter()
             .map(|share| DashboardTickerShare {
@@ -1725,10 +1751,7 @@ impl AppStore {
             .iter()
             .filter(|client| matches!(client.share.as_ref(), Some(share) if share.share_status == "active"))
             .count();
-        let total_active_requests = client_views
-            .iter()
-            .filter_map(|client| client.share.as_ref().map(|share| share.active_requests))
-            .sum();
+        let total_active_requests = share_views.iter().map(|share| share.active_requests).sum();
         Ok(DashboardResponse {
             generated_at: now,
             stats: DashboardStats {
@@ -1753,6 +1776,7 @@ impl AppStore {
                         lon: Some(lon),
                         last_seen_at: Some(now),
                         is_active: true,
+                        active_requests: 0,
                     }),
                 clients: client_map_points,
             },
@@ -2710,6 +2734,7 @@ fn upsert_share_tx(
     installation_id: &str,
     share: ShareDescriptor,
 ) -> Result<(), AppError> {
+    let keep_share_id = share.share_id.clone();
     let description = normalize_share_description(share.description.clone())?;
     let for_sale = normalize_share_for_sale(&share.for_sale)?;
     let market_access_mode = normalize_market_access_mode(&share.market_access_mode)?;
@@ -2781,7 +2806,99 @@ fn upsert_share_tx(
         ],
     )
     .map_err(map_share_constraint_error)?;
+    delete_other_shares_for_installation_tx(conn, installation_id, &keep_share_id)?;
     Ok(())
+}
+
+fn delete_other_shares_for_installation_tx(
+    conn: &Connection,
+    installation_id: &str,
+    keep_share_id: &str,
+) -> Result<usize, AppError> {
+    let old_share_ids = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT share_id FROM shares
+                 WHERE installation_id = ?1 AND share_id != ?2",
+            )
+            .map_err(|e| AppError::Internal(format!("prepare old shares cleanup failed: {e}")))?;
+        let rows = stmt
+            .query_map(params![installation_id, keep_share_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|e| AppError::Internal(format!("query old shares cleanup failed: {e}")))?;
+        collect_rows(rows)?
+    };
+
+    for old_share_id in &old_share_ids {
+        conn.execute(
+            "DELETE FROM share_request_logs WHERE share_id = ?1",
+            params![old_share_id],
+        )
+        .map_err(|e| AppError::Internal(format!("delete old share request logs failed: {e}")))?;
+        conn.execute(
+            "DELETE FROM share_health_checks WHERE share_id = ?1",
+            params![old_share_id],
+        )
+        .map_err(|e| AppError::Internal(format!("delete old share health checks failed: {e}")))?;
+    }
+
+    let deleted = conn
+        .execute(
+            "DELETE FROM shares
+             WHERE installation_id = ?1 AND share_id != ?2",
+            params![installation_id, keep_share_id],
+        )
+        .map_err(|e| AppError::Internal(format!("delete old installation shares failed: {e}")))?;
+    Ok(deleted)
+}
+
+fn delete_all_shares_for_installation_tx(
+    conn: &Connection,
+    installation_id: &str,
+) -> Result<usize, AppError> {
+    let share_ids = {
+        let mut stmt = conn
+            .prepare("SELECT share_id FROM shares WHERE installation_id = ?1")
+            .map_err(|e| {
+                AppError::Internal(format!("prepare installation shares cleanup failed: {e}"))
+            })?;
+        let rows = stmt
+            .query_map(params![installation_id], |row| row.get::<_, String>(0))
+            .map_err(|e| {
+                AppError::Internal(format!("query installation shares cleanup failed: {e}"))
+            })?;
+        collect_rows(rows)?
+    };
+
+    for share_id in &share_ids {
+        conn.execute(
+            "DELETE FROM share_request_logs WHERE share_id = ?1",
+            params![share_id],
+        )
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "delete installation share request logs failed: {e}"
+            ))
+        })?;
+        conn.execute(
+            "DELETE FROM share_health_checks WHERE share_id = ?1",
+            params![share_id],
+        )
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "delete installation share health checks failed: {e}"
+            ))
+        })?;
+    }
+
+    let deleted = conn
+        .execute(
+            "DELETE FROM shares WHERE installation_id = ?1",
+            params![installation_id],
+        )
+        .map_err(|e| AppError::Internal(format!("delete installation shares failed: {e}")))?;
+    Ok(deleted)
 }
 
 fn upsert_share_request_log_tx(
@@ -3769,6 +3886,9 @@ fn should_refresh_installation_geo(installation: &Installation, next_ip: Option<
 }
 
 fn prefer_dashboard_share(candidate: &ShareView, existing: &ShareView) -> bool {
+    if candidate.active_requests != existing.active_requests {
+        return candidate.active_requests > existing.active_requests;
+    }
     let candidate_active = candidate.share_status == "active";
     let existing_active = existing.share_status == "active";
     if candidate_active != existing_active {
@@ -6075,6 +6195,63 @@ mod tests {
         .expect("insert health check");
     }
 
+    fn test_share_descriptor(share_id: &str, subdomain: &str) -> ShareDescriptor {
+        ShareDescriptor {
+            share_id: share_id.into(),
+            share_name: format!("share-{share_id}"),
+            owner_email: Some("owner@example.com".into()),
+            shared_with_emails: vec![],
+            market_access_mode: "selected".into(),
+            for_sale_official_price_percent_by_app: Default::default(),
+            description: None,
+            for_sale: "No".into(),
+            subdomain: subdomain.into(),
+            share_token: format!("token-{share_id}"),
+            app_type: "proxy".into(),
+            provider_id: None,
+            token_limit: 1000,
+            parallel_limit: 3,
+            tokens_used: 0,
+            requests_count: 0,
+            share_status: "active".into(),
+            created_at: Utc::now().to_rfc3339(),
+            expires_at: (Utc::now() + Duration::hours(1)).to_rfc3339(),
+            support: ShareSupport {
+                claude: true,
+                codex: true,
+                gemini: true,
+            },
+            upstream_provider: None,
+            app_runtimes: ShareAppRuntimes::default(),
+        }
+    }
+
+    fn test_market_request_log(request_id: &str, share_id: &str) -> MarketRequestLogEntry {
+        MarketRequestLogEntry {
+            request_id: request_id.into(),
+            user_email: Some("user@example.com".into()),
+            api_key_prefix: Some("sk-test".into()),
+            router_id: Some("router-test".into()),
+            share_id: Some(share_id.into()),
+            share_subdomain: Some("old-sub".into()),
+            model: Some("gpt-5".into()),
+            request_agent: "codex".into(),
+            requested_model: "gpt-5".into(),
+            actual_model: "gpt-5".into(),
+            actual_model_source: "official".into(),
+            status: "settled".into(),
+            status_code: Some(200),
+            latency_ms: Some(100),
+            input_tokens: 1,
+            output_tokens: 2,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            usage_amount_usd: Some("0.001".into()),
+            created_at: Utc::now().to_rfc3339(),
+            settled_at: Some(Utc::now().to_rfc3339()),
+        }
+    }
+
     #[tokio::test]
     async fn list_market_shares_all_access_allows_future_market_email() {
         let (store, config) = setup_store("market-share-all-access").await;
@@ -7315,6 +7492,161 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upsert_share_removes_other_installation_shares_but_keeps_market_logs() {
+        let (store, config) = setup_store("single-share-upsert-cleanup").await;
+        insert_installation(&store, "inst-clean").await;
+        insert_share(&store, "inst-clean", "share-old", "old-sub", "active").await;
+        insert_health_check(&store, "share-old", Utc::now().timestamp(), true).await;
+
+        {
+            let conn = store.conn.lock().await;
+            upsert_share_request_log_tx(
+                &conn,
+                "inst-clean",
+                ShareRequestLogEntry {
+                    request_id: "req-old-share-log".into(),
+                    share_id: "share-old".into(),
+                    share_name: "Old Share".into(),
+                    provider_id: "provider-1".into(),
+                    provider_name: "Provider One".into(),
+                    app_type: "codex".into(),
+                    model: "gpt-5".into(),
+                    request_model: "gpt-5".into(),
+                    request_agent: "codex".into(),
+                    requested_model: "gpt-5".into(),
+                    actual_model: "gpt-5".into(),
+                    actual_model_source: "official".into(),
+                    status_code: 200,
+                    latency_ms: 100,
+                    first_token_ms: None,
+                    input_tokens: 1,
+                    output_tokens: 2,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    is_streaming: false,
+                    session_id: None,
+                    created_at: Utc::now().timestamp(),
+                },
+            )
+            .expect("insert old share request log");
+            let market = MarketRegistryRecord {
+                id: "market-1".into(),
+                display_name: "Market".into(),
+                email: "market@example.com".into(),
+                subdomain: "market".into(),
+                public_base_url: "https://market.example.com".into(),
+                scopes: vec![],
+                status: "active".into(),
+            };
+            upsert_market_request_log_tx(
+                &conn,
+                &market,
+                test_market_request_log("req_old_market_log", "share-old"),
+            )
+            .expect("insert old market request log");
+            upsert_share_tx(
+                &conn,
+                "inst-clean",
+                test_share_descriptor("share-new", "new-sub"),
+            )
+            .expect("upsert new share");
+        }
+
+        let conn = store.conn.lock().await;
+        let old_share_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM shares WHERE installation_id='inst-clean' AND share_id='share-old'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count old shares");
+        let new_share_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM shares WHERE installation_id='inst-clean' AND share_id='share-new'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count new shares");
+        let old_share_logs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM share_request_logs WHERE share_id='share-old'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count old share logs");
+        let old_health: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM share_health_checks WHERE share_id='share-old'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count old health");
+        let old_market_logs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM market_request_logs WHERE share_id='share-old'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count old market logs");
+        assert_eq!(old_share_count, 0);
+        assert_eq!(new_share_count, 1);
+        assert_eq!(old_share_logs, 0);
+        assert_eq!(old_health, 0);
+        assert_eq!(old_market_logs, 1);
+
+        let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
+    async fn batch_sync_shares_rejects_multiple_upserts() {
+        let (store, config) = setup_store("batch-multiple-upsert-reject").await;
+        let signing_key = insert_signed_installation(&store, "inst-multi").await;
+        let ops = vec![
+            ShareSyncOperation {
+                kind: "upsert".into(),
+                share: Some(test_share_descriptor("share-one", "one-sub")),
+                share_id: None,
+            },
+            ShareSyncOperation {
+                kind: "upsert".into(),
+                share: Some(test_share_descriptor("share-two", "two-sub")),
+                share_id: None,
+            },
+        ];
+        let timestamp_ms = Utc::now().timestamp_millis();
+        let nonce = Uuid::new_v4().to_string();
+        let signature = sign_test_payload(
+            &signing_key,
+            "inst-multi",
+            "share_batch_sync",
+            &ops,
+            timestamp_ms,
+            &nonce,
+        );
+
+        let err = store
+            .batch_sync_shares(
+                ShareBatchSyncRequest {
+                    installation_id: "inst-multi".into(),
+                    timestamp_ms,
+                    nonce,
+                    signature,
+                    ops,
+                },
+                ClientMetadata {
+                    ip: None,
+                    country_code: None,
+                },
+                "owner@example.com",
+            )
+            .await
+            .expect_err("multiple upserts should fail");
+        assert!(err.to_string().contains("multiple share upserts"));
+
+        let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
     async fn batch_sync_share_request_logs_requires_valid_signature() {
         let (store, config) = setup_store("signed-log-batch").await;
         let signing_key = insert_signed_installation(&store, "inst-logs").await;
@@ -7470,6 +7802,65 @@ mod tests {
                 .expect("share view")
                 .share_status,
             "paused"
+        );
+
+        let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
+    async fn dashboard_snapshot_aggregates_inflight_requests_across_installation_shares() {
+        let (store, config) = setup_store("dashboard-aggregate-inflight").await;
+        insert_installation(&store, "inst-1").await;
+        set_installation_country_code(&store, "inst-1", "JP").await;
+        insert_share(&store, "inst-1", "share-old", "old-sub", "active").await;
+        insert_share(&store, "inst-1", "share-new", "new-sub", "active").await;
+
+        let server_geo = ServerGeo {
+            lat: None,
+            lon: None,
+        };
+        let proxy = ProxyRegistry::default();
+        proxy
+            .set_route(
+                "old-sub".into(),
+                "http://127.0.0.1:1".into(),
+                Some("token-old".into()),
+                Some("share-old".into()),
+                Some("Old Share".into()),
+                false,
+                -1,
+            )
+            .await;
+        proxy
+            .set_route(
+                "new-sub".into(),
+                "http://127.0.0.1:2".into(),
+                Some("token-new".into()),
+                Some("share-new".into()),
+                Some("New Share".into()),
+                false,
+                -1,
+            )
+            .await;
+        proxy.set_share_inflight_for_test("share-old", 2).await;
+        proxy.set_share_inflight_for_test("share-new", 1).await;
+
+        let snapshot = store
+            .dashboard_snapshot(&config, &server_geo, &proxy, None)
+            .await
+            .expect("dashboard snapshot");
+
+        assert_eq!(snapshot.stats.clients, 1);
+        assert_eq!(snapshot.stats.total_active_requests, 3);
+        assert_eq!(snapshot.map.clients.len(), 1);
+        assert_eq!(snapshot.map.clients[0].active_requests, 3);
+        assert_eq!(
+            snapshot.clients[0]
+                .share
+                .as_ref()
+                .expect("selected share")
+                .share_id,
+            "share-old"
         );
 
         let _ = std::fs::remove_file(PathBuf::from(config.db_path));
