@@ -24,6 +24,7 @@ export type DashboardResponse = {
   };
   clients: DashboardClient[];
   markets?: DashboardMarket[];
+  tickerShares?: DashboardTickerShare[];
   countryCounts?: Record<string, number>;
   userCountryCounts?: Record<string, number>;
   recentRequestEvents?: RecentRequestEvent[];
@@ -65,11 +66,15 @@ export type ShareView = {
   ownerEmail?: string;
   sharedWithEmails?: string[];
   marketLinks?: ShareMarketLink[];
+  unknownMarketEmails?: string[];
   description?: string;
   forSale: string;
   marketAccessMode: string;
   subdomain: string;
+  shareToken?: string;
+  canViewSecret?: boolean;
   appType: string;
+  providerId?: string;
   tokenLimit: number;
   parallelLimit: number;
   tokensUsed: number;
@@ -79,8 +84,12 @@ export type ShareView = {
   expiresAt: string;
   isOnline: boolean;
   activeRequests: number;
+  onlineMinutes24h?: number;
   onlineRate24h: number;
   recentRequests?: ShareRequestLog[];
+  healthChecks?: HealthCheckEntry[];
+  support?: ShareSupport;
+  appRuntimes?: ShareAppRuntimes;
 };
 
 export type ShareMarketLink = {
@@ -109,9 +118,12 @@ export type DashboardMarket = {
   onlineShareCount: number;
   activeRequests: number;
   parallelCapacity: number;
+  onlineMinutes24h?: number;
   onlineRate24h: number;
   usageTokens: number;
   usageAmountUsd: string;
+  pricingSummary?: Record<string, string | number | null>;
+  healthChecks?: HealthCheckEntry[];
   linkedShares?: Array<{
     shareId: string;
     shareName: string;
@@ -122,19 +134,40 @@ export type DashboardMarket = {
     activeRequests: number;
     parallelLimit: number;
     onlineRate24h: number;
+    support?: ShareSupport;
   }>;
   recentRequests?: MarketRequestLog[];
 };
 
 export type ShareRequestLog = {
   requestId: string;
+  shareId?: string;
+  shareName?: string;
+  providerId?: string;
+  providerName?: string;
+  appType?: string;
   model: string;
+  requestModel?: string;
   requestAgent: string;
+  requestedModel?: string;
+  actualModel?: string;
+  actualModelSource?: string;
   statusCode: number;
   latencyMs: number;
+  firstTokenMs?: number;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  isStreaming?: boolean;
   createdAt: number;
+};
+
+export type DashboardTickerShare = {
+  shareId: string;
+  shareName: string;
+  subdomain: string;
+  recentRequests: ShareRequestLog[];
 };
 
 export type MarketRequestLog = {
@@ -142,14 +175,26 @@ export type MarketRequestLog = {
   marketId: string;
   marketEmail: string;
   marketSubdomain: string;
+  userEmail?: string;
+  apiKeyPrefix?: string;
+  routerId?: string;
+  shareId?: string;
+  shareSubdomain?: string;
+  model?: string;
+  requestAgent: string;
   requestedModel: string;
   actualModel: string;
+  actualModelSource?: string;
   status: string;
   statusCode?: number;
   latencyMs?: number;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  usageAmountUsd?: string;
   createdAt: string;
+  settledAt?: string;
 };
 
 export type RecentRequestEvent = {
@@ -163,6 +208,34 @@ export type RecentRequestEvent = {
   latencyMs?: number;
   inputTokens?: number;
   outputTokens?: number;
+};
+
+export type ShareSupport = {
+  claude?: boolean;
+  codex?: boolean;
+  gemini?: boolean;
+};
+
+export type ShareUpstreamProvider = {
+  kind?: string;
+  app?: string;
+  forSaleOfficialPricePercent?: number;
+  apiUrl?: string;
+  models?: Array<{
+    slot?: string;
+    actualModel?: string;
+  }>;
+};
+
+export type ShareAppRuntimes = {
+  claude?: ShareUpstreamProvider;
+  codex?: ShareUpstreamProvider;
+  gemini?: ShareUpstreamProvider;
+};
+
+export type HealthCheckEntry = {
+  checkedAt: number;
+  isHealthy: boolean;
 };
 
 export type SettingsField = {
