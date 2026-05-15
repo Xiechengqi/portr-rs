@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { Minus, Plus, RotateCcw } from "lucide-react";
 import * as React from "react";
 import type { DashboardResponse, MapPoint, MarketRequestLog, RecentRequestEvent, ShareRequestLog } from "@/lib/types";
@@ -94,7 +93,9 @@ function RequestTicker({ data }: { data: DashboardResponse | null }) {
 
 export function LiveMap({ data }: { data: DashboardResponse | null }) {
   const shellRef = React.useRef<HTMLDivElement | null>(null);
+  const worldRef = React.useRef<HTMLDivElement | null>(null);
   const dragRef = React.useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null);
+  const [worldSvg, setWorldSvg] = React.useState("");
   const [zoom, setZoomState] = React.useState(1);
   const [pan, setPan] = React.useState({ x: 0, y: 0 });
   const clients = data?.map?.clients || [];
@@ -119,8 +120,38 @@ export function LiveMap({ data }: { data: DashboardResponse | null }) {
   const setZoom = React.useCallback((next: number) => {
     const nextZoom = Math.max(1, Math.min(3, Number(next.toFixed(2))));
     setZoomState(nextZoom);
-    setPan((current) => nextZoom <= 1 ? { x: 0, y: 0 } : clampPan(current, nextZoom));
+    setPan((current) => clampPan(current, nextZoom));
   }, [clampPan]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch("/world-map.svg", { cache: "force-cache" })
+      .then((response) => response.text())
+      .then((svg) => {
+        if (!cancelled) setWorldSvg(svg);
+      })
+      .catch(() => {
+        if (!cancelled) setWorldSvg("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const root = worldRef.current;
+    if (!root) return;
+    const counts = data?.userCountryCounts || data?.countryCounts || {};
+    const values = Object.values(counts).filter((value) => value > 0);
+    const max = values.length ? Math.max(...values) : 0;
+    for (const element of Array.from(root.querySelectorAll<SVGElement>(".country"))) {
+      const iso3 = Array.from(element.classList).find((name) => /^[A-Z]{3}$/.test(name));
+      const count = iso3 ? counts[iso3] || 0 : 0;
+      const heat = max > 0 ? Math.min(1, count / max) : 0;
+      element.style.fillOpacity = String(0.1 + heat * 0.55);
+      element.style.strokeOpacity = String(0.16 + heat * 0.4);
+    }
+  }, [data?.countryCounts, data?.userCountryCounts, worldSvg]);
 
   React.useEffect(() => {
     function handleResize() {
@@ -154,23 +185,22 @@ export function LiveMap({ data }: { data: DashboardResponse | null }) {
   return (
     <section
       ref={shellRef}
-      className="relative aspect-[2/1] min-h-[420px] cursor-grab select-none overflow-hidden rounded-[20px] border bg-white text-primary shadow-[0_4px_6px_rgba(15,23,42,0.04),0_12px_28px_rgba(15,23,42,0.05)] outline-none active:cursor-grabbing"
+      className="relative h-[420px] cursor-grab select-none overflow-hidden rounded-[20px] border bg-white text-primary shadow-[0_4px_6px_rgba(15,23,42,0.04),0_12px_28px_rgba(15,23,42,0.05)] outline-none active:cursor-grabbing"
       style={{
         userSelect: "none",
         WebkitUserSelect: "none",
         WebkitTapHighlightColor: "transparent",
-        touchAction: zoom > 1 ? "none" : "pan-y",
+        touchAction: "none",
       }}
       tabIndex={0}
       aria-label="Live network map"
       onDragStart={(event) => event.preventDefault()}
       onWheel={(event) => {
-        if (!(event.ctrlKey || event.metaKey || zoom > 1)) return;
         event.preventDefault();
-        setZoom(zoom + (event.deltaY < 0 ? 0.15 : -0.15));
+        setZoom(zoom + (event.deltaY < 0 ? 0.18 : -0.18));
       }}
       onPointerDown={(event) => {
-        if (zoom <= 1 || (event.target as HTMLElement).closest("button")) return;
+        if ((event.target as HTMLElement).closest("button")) return;
         event.preventDefault();
         dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
         shellRef.current?.setPointerCapture(event.pointerId);
@@ -207,7 +237,16 @@ export function LiveMap({ data }: { data: DashboardResponse | null }) {
         className="absolute left-1/2 top-1/2 z-20 aspect-[2/1] w-full origin-center transition-transform duration-200 ease-out"
         style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
       >
-        <Image src="/world-map.svg" alt="" fill draggable={false} className="pointer-events-none object-fill opacity-100" priority />
+        {worldSvg ? (
+          <div
+            ref={worldRef}
+            className="pointer-events-none absolute inset-0 text-primary [&_svg]:absolute [&_svg]:inset-0 [&_svg]:block [&_svg]:h-full [&_svg]:w-full"
+            aria-hidden="true"
+            dangerouslySetInnerHTML={{ __html: worldSvg }}
+          />
+        ) : (
+          <div className="pointer-events-none absolute inset-0 bg-[url('/world-map.svg')] bg-[length:100%_100%] bg-center bg-no-repeat" aria-hidden="true" />
+        )}
         <svg className="absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 360 180" preserveAspectRatio="none" aria-hidden="true">
           {server
             ? clients.map((client) => {

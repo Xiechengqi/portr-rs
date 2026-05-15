@@ -9,16 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@radix-ui/react-alert-dialog": "latest",
-    "@radix-ui/react-dialog": "latest",
-    "@radix-ui/react-dropdown-menu": "latest",
-    "@radix-ui/react-scroll-area": "latest",
-    "@radix-ui/react-separator": "latest",
-    "@radix-ui/react-slot": "latest",
-    "@radix-ui/react-switch": "latest",
-    "@radix-ui/react-tabs": "latest",
-    "@radix-ui/react-tooltip": "latest",
-    "class-variance-authority": "latest",
+    "@heroui/react": "^3.0.4",
+    "@heroui/styles": "^3.0.4",
     "clsx": "latest",
     "lucide-react": "latest",
     "next": "latest",

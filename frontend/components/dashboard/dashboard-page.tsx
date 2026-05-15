@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Alert } from "@/components/ui/alert";
+import { Alert } from "@heroui/react";
 import { BoardDock } from "@/components/board/board-dock";
 import { ClientsTable, MarketsTable, PresenceFooter } from "@/components/dashboard/data-tables";
 import { LiveMap } from "@/components/dashboard/live-map";
@@ -30,7 +30,7 @@ export function DashboardPage() {
   return (
     <>
       <main className="mx-auto grid w-[calc(100%-2rem)] max-w-7xl gap-6 pb-6">
-        {error ? <Alert variant="destructive">{error}</Alert> : null}
+        {error ? <Alert status="danger">{error}</Alert> : null}
         <LiveMap data={data} />
         <ClientsTable clients={data?.clients || []} />
         <MarketsTable markets={data?.markets || []} />

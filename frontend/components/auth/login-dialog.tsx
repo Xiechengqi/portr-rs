@@ -1,18 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { Alert, Button, Input, Modal } from "@heroui/react";
 import { Loader2, Mail } from "lucide-react";
-import { Alert } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { requestEmailCode, resetInstallationIdentityState, shouldResetInstallationIdentity, verifyEmailCode } from "@/lib/auth";
 import { useAuth } from "@/components/auth/auth-provider";
 
@@ -76,51 +66,58 @@ export function LoginDialog({ open, onOpenChange }: { open: boolean; onOpenChang
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Share Email Login</DialogTitle>
-          <DialogDescription>Sign in with an email verification code.</DialogDescription>
-        </DialogHeader>
-        <div
-          className="grid gap-4"
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-            event.preventDefault();
-            if (step === "email") {
-              if (!busy && email.trim()) sendCode().catch(console.error);
-            } else if (!busy && code.trim()) {
-              verify().catch(console.error);
-            }
-          }}
-        >
-          <label className="grid gap-2 text-sm">
-            <span className="mono-label text-muted-foreground">Email</span>
-            <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="email@example.com" type="email" />
-          </label>
-          {step === "code" ? (
-            <label className="grid gap-2 text-sm">
-              <span className="mono-label text-muted-foreground">Code</span>
-              <Input value={code} onChange={(event) => setCode(event.target.value)} placeholder="123456" inputMode="numeric" />
-            </label>
-          ) : null}
-          {message ? <Alert variant="success">{message}</Alert> : null}
-          {error ? <Alert variant="destructive">{error}</Alert> : null}
-        </div>
-        <DialogFooter>
-          {step === "email" ? (
-            <Button onClick={sendCode} disabled={busy || !email.trim()}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-              Send Code
-            </Button>
-          ) : (
-            <Button onClick={verify} disabled={busy || !code.trim()}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Verify
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <Modal isOpen={open} onOpenChange={onOpenChange}>
+      <Modal.Backdrop>
+        <Modal.Container placement="center">
+          <Modal.Dialog>
+            <Modal.CloseTrigger />
+            <Modal.Header>
+              <div>
+                <Modal.Heading>Share Email Login</Modal.Heading>
+                <p className="mt-1 text-sm text-muted-foreground">Sign in with an email verification code.</p>
+              </div>
+            </Modal.Header>
+            <Modal.Body
+              className="grid gap-4"
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                if (step === "email") {
+                  if (!busy && email.trim()) sendCode().catch(console.error);
+                } else if (!busy && code.trim()) {
+                  verify().catch(console.error);
+                }
+              }}
+            >
+              <label className="grid gap-2 text-sm">
+                <span className="mono-label text-muted-foreground">Email</span>
+                <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="email@example.com" type="email" />
+              </label>
+              {step === "code" ? (
+                <label className="grid gap-2 text-sm">
+                  <span className="mono-label text-muted-foreground">Code</span>
+                  <Input value={code} onChange={(event) => setCode(event.target.value)} placeholder="123456" inputMode="numeric" />
+                </label>
+              ) : null}
+              {message ? <Alert status="success">{message}</Alert> : null}
+              {error ? <Alert status="danger">{error}</Alert> : null}
+            </Modal.Body>
+            <Modal.Footer>
+              {step === "email" ? (
+                <Button variant="primary" onClick={sendCode} isDisabled={busy || !email.trim()}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                  Send Code
+                </Button>
+              ) : (
+                <Button variant="primary" onClick={verify} isDisabled={busy || !code.trim()}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Verify
+                </Button>
+              )}
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
   );
 }

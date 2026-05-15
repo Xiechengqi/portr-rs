@@ -1,10 +1,8 @@
 "use client";
 
 import { ExternalLink } from "lucide-react";
+import { Card, Chip, Modal } from "@heroui/react";
 import * as React from "react";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { DashboardClient, DashboardMarket, HealthCheckEntry, ShareAppRuntimes, ShareView } from "@/lib/types";
 import { compactTokens, formatDateTime, formatNumber, formatRelativeTime } from "@/lib/utils";
 
@@ -52,7 +50,7 @@ function sortMarkets(markets: DashboardMarket[]) {
 }
 
 function StatusBadge({ active, label }: { active: boolean; label: string }) {
-  return <Badge variant={active ? "success" : "outline"}>{label}</Badge>;
+  return <Chip color={active ? "success" : "default"} size="sm" variant={active ? "soft" : "tertiary"}>{label}</Chip>;
 }
 
 function UsageBar({ used, limit }: { used: number; limit: number }) {
@@ -94,7 +92,7 @@ function ForSaleCell({ share }: { share?: ShareView }) {
   const marketLines = share.marketAccessMode === "all" ? ["All markets"] : (share.marketLinks || []).map((market) => market.subdomain).filter(Boolean);
   return (
     <div className="grid min-w-32 gap-1.5">
-      <Badge variant={value === "No" ? "outline" : "secondary"}>{value}</Badge>
+      <Chip size="sm" variant={value === "No" ? "tertiary" : "soft"}>{value}</Chip>
       {value === "Yes" ? (
         <div className="grid gap-0.5 font-mono text-[11px] text-muted-foreground">
           <div>Claude {upstreamPercent(share.appRuntimes, "claude")}</div>
@@ -129,7 +127,7 @@ function SupportCell({ share }: { share?: ShareView }) {
 
 function ShareStatusCell({ share }: { share?: ShareView }) {
   if (!share) return <span className="text-muted-foreground">-</span>;
-  if (!share.isOnline) return <Badge variant="outline">Offline</Badge>;
+  if (!share.isOnline) return <Chip size="sm" variant="tertiary">Offline</Chip>;
   const limit = isUnlimited(share.parallelLimit) ? "∞" : String(share.parallelLimit || 0);
   return (
     <div className="grid min-w-52 gap-2 text-sm">
@@ -152,7 +150,7 @@ export function ClientsTable({ clients }: { clients: DashboardClient[] }) {
         <a href="https://github.com/Xiechengqi/cc-switch/releases" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-blue-400">[install]</a>
       </div>
       <Card className="overflow-hidden rounded-[20px]">
-        <CardContent className="overflow-x-auto p-0">
+        <Card.Content className="overflow-x-auto p-0">
           <table className="w-full min-w-[1180px] border-collapse text-sm">
             <thead className="bg-muted text-left font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
               <tr>
@@ -192,26 +190,35 @@ export function ClientsTable({ clients }: { clients: DashboardClient[] }) {
               )}
             </tbody>
           </table>
-        </CardContent>
+        </Card.Content>
       </Card>
-      <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{selected?.share?.shareName || selected?.installation.id}</DialogTitle>
-            <DialogDescription>{selected?.installation.id}</DialogDescription>
-          </DialogHeader>
-          {selected ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Info label="Platform" value={`${selected.installation.platform} ${selected.installation.appVersion}`} />
-              <Info label="Last seen" value={formatDateTime(selected.installation.lastSeenAt)} />
-              <Info label="Owner" value={selected.share?.ownerEmail || "-"} />
-              <Info label="Active requests" value={formatNumber(selected.share?.activeRequests || 0)} />
-              <Info label="Created" value={formatDateTime(selected.share?.createdAt)} />
-              <Info label="Expires" value={selected.share?.expiresAt || "-"} />
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      <Modal isOpen={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="lg">
+            <Modal.Dialog>
+              <Modal.CloseTrigger />
+              <Modal.Header>
+                <div>
+                  <Modal.Heading>{selected?.share?.shareName || selected?.installation.id}</Modal.Heading>
+                  <p className="mt-1 text-sm text-muted-foreground">{selected?.installation.id}</p>
+                </div>
+              </Modal.Header>
+              <Modal.Body>
+                {selected ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Info label="Platform" value={`${selected.installation.platform} ${selected.installation.appVersion}`} />
+                    <Info label="Last seen" value={formatDateTime(selected.installation.lastSeenAt)} />
+                    <Info label="Owner" value={selected.share?.ownerEmail || "-"} />
+                    <Info label="Active requests" value={formatNumber(selected.share?.activeRequests || 0)} />
+                    <Info label="Created" value={formatDateTime(selected.share?.createdAt)} />
+                    <Info label="Expires" value={selected.share?.expiresAt || "-"} />
+                  </div>
+                ) : null}
+              </Modal.Body>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
     </section>
   );
 }
@@ -260,7 +267,7 @@ export function MarketsTable({ markets }: { markets: DashboardMarket[] }) {
         <a href="https://github.com/Xiechengqi/cc-switch-market/releases" target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-blue-400">[install]</a>
       </div>
       <Card className="overflow-hidden rounded-[20px]">
-        <CardContent className="overflow-x-auto p-0">
+        <Card.Content className="overflow-x-auto p-0">
           <table className="w-full min-w-[900px] border-collapse text-sm">
             <thead className="bg-muted text-left font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
               <tr>
@@ -294,34 +301,43 @@ export function MarketsTable({ markets }: { markets: DashboardMarket[] }) {
               )}
             </tbody>
           </table>
-        </CardContent>
+        </Card.Content>
       </Card>
-      <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{selected?.displayName || selected?.id}</DialogTitle>
-            <DialogDescription>{selected?.email}</DialogDescription>
-          </DialogHeader>
-          {selected ? (
-            <div className="grid gap-4">
-              <div className="grid gap-4 sm:grid-cols-3">
-                <Info label="Status" value={marketStatusLabel(selected)} />
-                <Info label="Parallel" value={`${selected.activeRequests} / ${isUnlimited(selected.parallelCapacity) ? "∞" : selected.parallelCapacity}`} />
-                <Info label="Online 24h" value={`${(selected.onlineRate24h || 0).toFixed(1)}%`} />
-              </div>
-              <div className="rounded-lg border">
-                {(selected.linkedShares || []).slice(0, 8).map((share) => (
-                  <div key={share.shareId} className="flex items-center justify-between border-b px-3 py-2 last:border-0">
-                    <span className="font-medium">{share.shareName}</span>
-                    <Badge variant={share.online ? "success" : "outline"}>{share.online ? "online" : "offline"}</Badge>
+      <Modal isOpen={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="lg">
+            <Modal.Dialog>
+              <Modal.CloseTrigger />
+              <Modal.Header>
+                <div>
+                  <Modal.Heading>{selected?.displayName || selected?.id}</Modal.Heading>
+                  <p className="mt-1 text-sm text-muted-foreground">{selected?.email}</p>
+                </div>
+              </Modal.Header>
+              <Modal.Body>
+                {selected ? (
+                  <div className="grid gap-4">
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      <Info label="Status" value={marketStatusLabel(selected)} />
+                      <Info label="Parallel" value={`${selected.activeRequests} / ${isUnlimited(selected.parallelCapacity) ? "∞" : selected.parallelCapacity}`} />
+                      <Info label="Online 24h" value={`${(selected.onlineRate24h || 0).toFixed(1)}%`} />
+                    </div>
+                    <div className="rounded-lg border">
+                      {(selected.linkedShares || []).slice(0, 8).map((share) => (
+                        <div key={share.shareId} className="flex items-center justify-between border-b px-3 py-2 last:border-0">
+                          <span className="font-medium">{share.shareName}</span>
+                          <Chip color={share.online ? "success" : "default"} size="sm" variant={share.online ? "soft" : "tertiary"}>{share.online ? "online" : "offline"}</Chip>
+                        </div>
+                      ))}
+                      {!selected.linkedShares?.length ? <div className="p-4 text-sm text-muted-foreground">No linked shares</div> : null}
+                    </div>
                   </div>
-                ))}
-                {!selected.linkedShares?.length ? <div className="p-4 text-sm text-muted-foreground">No linked shares</div> : null}
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+                ) : null}
+              </Modal.Body>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
     </section>
   );
 }

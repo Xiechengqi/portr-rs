@@ -2,19 +2,11 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { Button, Dropdown } from "@heroui/react";
 import { LogOut, Settings, UserRound } from "lucide-react";
 import * as React from "react";
 import { LoginDialog } from "@/components/auth/login-dialog";
 import { AuthProvider, useAuth } from "@/components/auth/auth-provider";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { getDashboard } from "@/lib/api";
 import type { DashboardResponse } from "@/lib/types";
 import { formatNumber } from "@/lib/utils";
@@ -143,32 +135,41 @@ function Topbar({ active }: { active: "dashboard" | "settings" }) {
       <div className="flex flex-1 items-center justify-end gap-4">
         {active === "dashboard" ? <TopbarStats /> : null}
         {authed ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
+          <Dropdown>
+            <Dropdown.Trigger>
+              <Button variant="outline" size="sm" className="gap-2">
                 <UserRound className="h-4 w-4" />
                 <span className="hidden max-w-48 truncate sm:inline">{session?.user?.email}</span>
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>{session?.user?.email}</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {session?.isAdmin ? (
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/" target="_blank" rel="noopener noreferrer">
+            </Dropdown.Trigger>
+            <Dropdown.Popover placement="bottom right">
+              <Dropdown.Menu aria-label="User menu">
+                <Dropdown.Section>
+                  <Dropdown.Item id="email" isDisabled className="text-xs text-muted-foreground">
+                    {session?.user?.email}
+                  </Dropdown.Item>
+                </Dropdown.Section>
+                {session?.isAdmin ? (
+                  <Dropdown.Item id="settings" href="/settings/" target="_blank" rel="noopener noreferrer">
                     <Settings className="h-4 w-4" />
                     Settings
-                  </Link>
-                </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuItem onClick={() => logout().catch(console.error)} className="text-destructive">
-                <LogOut className="h-4 w-4" />
-                Logout
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  </Dropdown.Item>
+                ) : null}
+                <Dropdown.Item id="logout" onAction={() => logout().catch(console.error)} className="text-destructive">
+                  <LogOut className="h-4 w-4" />
+                  Logout
+                </Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
         ) : (
-          <Button variant="outline" size="sm" className="text-xs font-normal text-muted-foreground" onClick={() => setLoginOpen(true)} disabled={loading}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 px-3 text-[11px] font-normal text-muted-foreground hover:text-slate-500"
+            onClick={() => setLoginOpen(true)}
+            isDisabled={loading}
+          >
             Login
           </Button>
         )}
