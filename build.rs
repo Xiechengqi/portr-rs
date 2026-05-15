@@ -46,6 +46,12 @@ fn generate_ui_assets() {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo");
     let dest = Path::new(&out_dir).join("ui_assets.rs");
     let ui_root = Path::new("frontend/out");
+    let index_html = ui_root.join("index.html");
+    if std::env::var("PROFILE").as_deref() == Ok("release") && !index_html.exists() {
+        panic!(
+            "frontend assets are missing; run `(cd frontend && npm ci && npm run build)` before `cargo build --release`"
+        );
+    }
     let mut files = Vec::new();
     if ui_root.exists() {
         collect_files(ui_root, ui_root, &mut files);
