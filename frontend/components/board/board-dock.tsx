@@ -120,7 +120,6 @@ export function BoardDock() {
               <article key={message.id} className="rounded-lg border bg-background p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{message.authorLabel || "Guest"}</span>
-                  {message.authorKind === "admin" ? <Badge>Official</Badge> : null}
                   {message.pinned ? <Badge variant="warning">Pinned</Badge> : null}
                   {message.featured && !message.pinned ? <Badge variant="secondary">Featured</Badge> : null}
                   <span className="ml-auto text-xs text-muted-foreground">{formatRelativeTime(message.createdAt)}</span>
