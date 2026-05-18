@@ -45,6 +45,7 @@ use crate::proxy::ProxyRegistry;
 const SHARE_REQUEST_LOG_RECOVERY_LIMIT: usize = 10;
 const SHARE_REQUEST_LOG_RECOVERY_STALE_SECS: i64 = 10 * 60;
 const SHARE_REQUEST_LOG_RECOVERY_COOLDOWN_SECS: i64 = 5 * 60;
+const ROUTE_REGISTRATION_PENDING_GRACE_SECS: u64 = 30;
 const PUBLIC_MAP_CLIENT_ACTIVE_WINDOW_MINUTES: i64 = 5;
 const ONLINE_WINDOW_MINUTES: usize = 24 * 60;
 const SIGNED_REQUEST_MAX_SKEW_MS: i64 = 60_000;
@@ -1000,6 +1001,13 @@ impl AppStore {
             ],
         )
         .map_err(|e| AppError::Internal(format!("insert lease failed: {e}")))?;
+
+        proxy
+            .mark_route_pending(
+                subdomain.clone(),
+                StdDuration::from_secs(ROUTE_REGISTRATION_PENDING_GRACE_SECS),
+            )
+            .await;
 
         Ok(IssueLeaseResponse {
             lease_id: lease.id,

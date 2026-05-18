@@ -5,6 +5,7 @@ use axum::response::Response;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
@@ -26,6 +27,11 @@ pub(crate) struct RouteEntry {
     connection_id: Option<String>,
     is_free_share: bool,
     parallel_limit: i64,
+}
+
+#[derive(Debug, Clone)]
+struct PendingRouteEntry {
+    expires_at: Instant,
 }
 
 impl RouteEntry {
@@ -127,6 +133,7 @@ impl KeyedConcurrencyLimiter {
 #[derive(Debug, Default)]
 pub struct ProxyRegistry {
     routes: RwLock<HashMap<String, RouteEntry>>,
+    pending_routes: RwLock<HashMap<String, PendingRouteEntry>>,
     share_limiter: Arc<KeyedConcurrencyLimiter>,
     free_share_ip_limiter: Arc<KeyedConcurrencyLimiter>,
     /// Tracks requests that actually traversed the market proxy path, keyed by
@@ -148,6 +155,7 @@ impl ProxyRegistry {
         is_free_share: bool,
         parallel_limit: i64,
     ) {
+        self.pending_routes.write().await.remove(&subdomain);
         self.routes.write().await.insert(
             subdomain.clone(),
             RouteEntry {
@@ -161,6 +169,22 @@ impl ProxyRegistry {
                 parallel_limit,
             },
         );
+    }
+
+    pub async fn mark_route_pending(&self, subdomain: String, ttl: Duration) {
+        self.pending_routes.write().await.insert(
+            subdomain,
+            PendingRouteEntry {
+                expires_at: Instant::now() + ttl,
+            },
+        );
+    }
+
+    pub async fn has_pending_route(&self, subdomain: &str) -> bool {
+        let now = Instant::now();
+        let mut pending = self.pending_routes.write().await;
+        pending.retain(|_, entry| entry.expires_at > now);
+        pending.contains_key(subdomain)
     }
 
     pub async fn remove_route(&self, subdomain: &str) {
@@ -612,11 +636,29 @@ pub async fn proxy_handler(
         return simple_response(StatusCode::NOT_FOUND, "not-found");
     }
 
+    let route_subdomain = subdomain_for_host(&host, &state.config.tunnel_domain);
     let Some(route) = state
         .proxy
         .backend_for_host(&host, &state.config.tunnel_domain)
         .await
     else {
+        if is_share_router_probe {
+            if let Some(subdomain) = route_subdomain.as_deref() {
+                if state.proxy.has_pending_route(subdomain).await {
+                    debug!(
+                        method = %method,
+                        host = %host,
+                        path = %path_and_query,
+                        client_ip = %user_ip,
+                        client_country = %user_country,
+                        client_asn = %user_asn,
+                        user_agent = %user_agent,
+                        "proxy health probe accepted while route registration is pending"
+                    );
+                    return empty_response(StatusCode::NO_CONTENT);
+                }
+            }
+        }
         warn!(
             method = %method,
             host = %host,
@@ -823,6 +865,22 @@ pub async fn proxy_handler(
     let upstream = match builder.body(body).send().await {
         Ok(response) => response,
         Err(err) => {
+            if is_share_router_probe && state.proxy.has_pending_route(&route.subdomain).await {
+                debug!(
+                    method = %method,
+                    host = %host,
+                    path = %path_and_query,
+                    backend = %backend,
+                    share_token = %log_token,
+                    client_ip = %user_ip,
+                    client_country = %user_country,
+                    client_asn = %user_asn,
+                    user_agent = %user_agent,
+                    error = %err,
+                    "proxy health probe accepted while replacement route registration is pending"
+                );
+                return empty_response(StatusCode::NO_CONTENT);
+            }
             warn!(
                 method = %method,
                 host = %host,

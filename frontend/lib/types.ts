@@ -322,6 +322,8 @@ export type VersionResponse = {
   commit: string;
   buildTime: string;
   binaryPath: string;
+  rollbackPath: string;
+  rollbackAvailable: boolean;
   uptimeSecs: number;
   service: {
     manager: "systemd" | "nohup";

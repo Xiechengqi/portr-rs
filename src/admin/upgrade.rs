@@ -14,7 +14,9 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::admin::restart::{RestartStrategy, schedule_restart};
-use crate::admin::version::{BINARY_INSTALL_PATH, RELEASE_BINARY_URL, detect_service_status};
+use crate::admin::version::{
+    BINARY_INSTALL_PATH, BINARY_ROLLBACK_PATH, RELEASE_BINARY_URL, detect_service_status,
+};
 use crate::error::AppError;
 
 const LOG_CHANNEL_CAPACITY: usize = 256;
@@ -43,6 +45,14 @@ pub struct UpgradeLogEntry {
     pub message: String,
     pub progress: Option<u8>,
     pub at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RollbackResponse {
+    pub ok: bool,
+    pub strategy: String,
+    pub backup_path: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -302,7 +312,7 @@ async fn run_upgrade(
     }
 
     // 5) backup + atomic swap
-    let bak_path = format!("{BINARY_INSTALL_PATH}.bak");
+    let bak_path = BINARY_ROLLBACK_PATH.to_string();
     let swap_result = swap_binary(&tmp_path, target, Path::new(&bak_path));
     cleanup_tmp(&tmp_path);
     if let Err(err) = swap_result {
@@ -516,3 +526,51 @@ mod tests {
 }
 
 pub type SharedUpgradeRegistry = Arc<UpgradeRegistry>;
+
+pub async fn rollback_to_previous_binary() -> Result<RollbackResponse, AppError> {
+    let target = Path::new(BINARY_INSTALL_PATH);
+    let bak_path = BINARY_ROLLBACK_PATH.to_string();
+    let bak = Path::new(&bak_path);
+    if !bak.exists() {
+        return Err(AppError::NotFound(format!(
+            "rollback backup not found: {bak_path}"
+        )));
+    }
+    chmod_exec(bak)?;
+    sanity_exec(bak).await?;
+
+    let rollback_tmp = target.with_file_name(format!(
+        "cc-switch-router.rollback-current-{}",
+        Uuid::new_v4()
+    ));
+    if target.exists() {
+        std::fs::rename(target, &rollback_tmp)
+            .map_err(|err| AppError::Internal(format!("stage current binary failed: {err}")))?;
+    }
+    if let Err(err) = std::fs::rename(bak, target) {
+        if rollback_tmp.exists() {
+            let _ = std::fs::rename(&rollback_tmp, target);
+        }
+        return Err(AppError::Internal(format!(
+            "restore rollback backup failed: {err}"
+        )));
+    }
+    if rollback_tmp.exists() {
+        if let Err(err) = std::fs::rename(&rollback_tmp, bak) {
+            warn!(
+                current = %rollback_tmp.display(),
+                backup = %bak.display(),
+                error = %err,
+                "failed to preserve replaced binary as rollback backup"
+            );
+            cleanup_tmp(&rollback_tmp);
+        }
+    }
+    let strategy = RestartStrategy::from_manager(detect_service_status().manager);
+    schedule_restart(strategy)?;
+    Ok(RollbackResponse {
+        ok: true,
+        strategy: strategy.label().to_string(),
+        backup_path: bak_path,
+    })
+}

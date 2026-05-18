@@ -68,6 +68,16 @@ export async function restartService() {
   );
 }
 
+export async function rollbackService() {
+  return parseJson<{ ok: boolean; strategy: string; backupPath: string }>(
+    await authFetch("/v1/admin/rollback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+  );
+}
+
 export async function startUpgrade() {
   return parseJson<{ taskId: string }>(await authFetch("/v1/admin/upgrade", { method: "POST" }));
 }

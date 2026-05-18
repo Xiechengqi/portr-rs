@@ -8,6 +8,7 @@ use crate::error::AppError;
 
 pub const SERVICE_UNIT: &str = "cc-switch-router.service";
 pub const BINARY_INSTALL_PATH: &str = "/usr/local/bin/cc-switch-router";
+pub const BINARY_ROLLBACK_PATH: &str = "/usr/local/bin/cc-switch-router.bak";
 pub const SERVICE_LOG_PATH: &str = "/var/log/cc-switch-router.log";
 pub const RELEASE_BINARY_URL: &str = "https://github.com/Xiechengqi/cc-switch-router/releases/download/latest/cc-switch-router-linux-amd64";
 
@@ -156,6 +157,8 @@ pub struct VersionResponse {
     pub commit: &'static str,
     pub build_time: &'static str,
     pub binary_path: &'static str,
+    pub rollback_path: &'static str,
+    pub rollback_available: bool,
     pub uptime_secs: u64,
     pub service: ServiceStatus,
     pub latest: LatestReleaseMeta,

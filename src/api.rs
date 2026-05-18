@@ -22,8 +22,9 @@ use crate::admin::{
     },
     upgrade::{UpgradeLogEntry, UpgradeStatus},
     version::{
-        BINARY_INSTALL_PATH, SERVICE_UNIT, ServiceManager, VersionResponse, build_info,
-        detect_service_status, ensure_binary_writable, fetch_latest_release_meta, uptime_secs_from,
+        BINARY_INSTALL_PATH, BINARY_ROLLBACK_PATH, SERVICE_UNIT, ServiceManager, VersionResponse,
+        build_info, detect_service_status, ensure_binary_writable, fetch_latest_release_meta,
+        uptime_secs_from,
     },
 };
 use crate::client_meta::extract_client_metadata;
@@ -156,6 +157,7 @@ pub fn router(state: ServerState) -> Router {
         .route("/v1/admin/version", get(admin_version))
         .route("/v1/admin/restart", post(admin_restart))
         .route("/v1/admin/upgrade", post(admin_upgrade_start))
+        .route("/v1/admin/rollback", post(admin_rollback))
         .route("/v1/admin/upgrade/stream", get(admin_upgrade_stream))
         .route("/v1/admin/telegram/test", post(admin_telegram_test))
         .route("/v1/admin/audit", get(admin_audit_list))
@@ -1340,6 +1342,8 @@ async fn admin_version(
         commit: info.commit,
         build_time: info.build_time,
         binary_path: BINARY_INSTALL_PATH,
+        rollback_path: BINARY_ROLLBACK_PATH,
+        rollback_available: std::path::Path::new(BINARY_ROLLBACK_PATH).exists(),
         uptime_secs: uptime_secs_from(state.start_instant),
         service,
         latest,
@@ -1390,6 +1394,31 @@ async fn admin_restart(
         "ok": true,
         "strategy": strategy.label(),
     })))
+}
+
+async fn admin_rollback(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Result<Json<crate::admin::upgrade::RollbackResponse>, AppError> {
+    let session = require_admin_session(&state, &headers).await?;
+    ensure_binary_writable()?;
+    let response = crate::admin::upgrade::rollback_to_previous_binary().await?;
+    let metadata = extract_client_metadata(&headers, addr);
+    let payload = serde_json::json!({
+        "strategy": response.strategy,
+        "backupPath": response.backup_path,
+    });
+    let _ = state
+        .store
+        .record_admin_audit(
+            Some(&session.email),
+            "service.rollback",
+            Some(&payload),
+            metadata.ip.as_deref(),
+        )
+        .await;
+    Ok(Json(response))
 }
 
 async fn admin_upgrade_start(

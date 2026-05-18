@@ -5,7 +5,7 @@ import { Alert, Button, Card, Chip, Modal, ScrollShadow } from "@heroui/react";
 import * as React from "react";
 import { useLocaleText } from "@/components/i18n/locale-provider";
 import { readAuthState } from "@/lib/auth";
-import { getVersion, restartService, startUpgrade } from "@/lib/api";
+import { getVersion, restartService, rollbackService, startUpgrade } from "@/lib/api";
 import type { VersionResponse } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
@@ -73,6 +73,21 @@ export function VersionPanel({ isAdmin }: { isAdmin: boolean }) {
     }
   }
 
+  async function rollback() {
+    if (!window.confirm(t("version.confirmRollback"))) return;
+    if (!window.confirm(t("version.confirmRollbackAgain"))) return;
+    setBusy("rollback");
+    setError("");
+    try {
+      await rollbackService();
+      setLogs((prev) => [...prev, t("version.restartScheduledHealth")]);
+      pollHealthAndReload().catch(console.error);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(null);
+    }
+  }
+
   function streamUpgrade(taskId: string) {
     const token = readAuthState().accessToken;
     const params = new URLSearchParams({ taskId });
@@ -118,6 +133,7 @@ export function VersionPanel({ isAdmin }: { isAdmin: boolean }) {
           <Info label={t("version.service")} value={<Chip color={info?.service.active ? "success" : "default"} size="sm" variant={info?.service.active ? "soft" : "tertiary"}>{info?.service.manager || "--"} / {info?.service.activeState || (info?.service.active ? "active" : "inactive")}</Chip>} />
           <Info label={t("version.latestBinary")} value={info?.latest.available ? t("version.available", { size: formatBytes(info.latest.contentLength) }) : info?.latest.error || t("version.unknown")} />
           <Info label={t("version.binaryPath")} value={isAdmin ? info?.binaryPath || "--" : t("version.adminOnly")} />
+          <Info label={t("common.rollback")} value={isAdmin ? (info?.rollbackAvailable ? info.rollbackPath : t("version.rollbackUnavailable")) : t("version.adminOnly")} />
         </div>
         {isAdmin ? (
           <div className="flex flex-wrap gap-2">
@@ -128,6 +144,10 @@ export function VersionPanel({ isAdmin }: { isAdmin: boolean }) {
             <Button variant="primary" onClick={upgrade} isDisabled={!!busy}>
               {busy === "upgrade" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
               {t("common.upgrade")}
+            </Button>
+            <Button variant="outline" onClick={rollback} isDisabled={!!busy || !info?.rollbackAvailable} className="border-amber-300 text-amber-700 hover:bg-amber-50">
+              {busy === "rollback" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+              {t("common.rollback")}
             </Button>
           </div>
         ) : null}
