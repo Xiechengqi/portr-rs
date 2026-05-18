@@ -23,6 +23,7 @@ pub(crate) struct RouteEntry {
     share_id: Option<String>,
     share_name: Option<String>,
     subdomain: String,
+    connection_id: Option<String>,
     is_free_share: bool,
     parallel_limit: i64,
 }
@@ -30,6 +31,10 @@ pub(crate) struct RouteEntry {
 impl RouteEntry {
     pub(crate) fn share_id(&self) -> Option<&str> {
         self.share_id.as_deref()
+    }
+
+    pub(crate) fn connection_id(&self) -> Option<&str> {
+        self.connection_id.as_deref()
     }
 }
 
@@ -136,6 +141,7 @@ impl ProxyRegistry {
         &self,
         subdomain: String,
         backend: String,
+        connection_id: Option<String>,
         share_token: Option<String>,
         share_id: Option<String>,
         share_name: Option<String>,
@@ -150,6 +156,7 @@ impl ProxyRegistry {
                 share_id,
                 share_name,
                 subdomain,
+                connection_id,
                 is_free_share,
                 parallel_limit,
             },
@@ -158,6 +165,17 @@ impl ProxyRegistry {
 
     pub async fn remove_route(&self, subdomain: &str) {
         self.routes.write().await.remove(subdomain);
+    }
+
+    pub async fn remove_route_if_connection(&self, subdomain: &str, connection_id: &str) {
+        let mut routes = self.routes.write().await;
+        let should_remove = routes
+            .get(subdomain)
+            .and_then(|route| route.connection_id())
+            == Some(connection_id);
+        if should_remove {
+            routes.remove(subdomain);
+        }
     }
 
     pub(crate) async fn backend_for_host(
@@ -1090,6 +1108,7 @@ mod tests {
             .set_route(
                 "demo".into(),
                 "127.0.0.1:3000".into(),
+                None,
                 Some("token-demo".into()),
                 Some("share-1".into()),
                 Some("Demo Share".into()),
@@ -1118,6 +1137,7 @@ mod tests {
                 "demo".into(),
                 "127.0.0.1:3000".into(),
                 None,
+                None,
                 Some("share-1".into()),
                 None,
                 false,
@@ -1134,6 +1154,56 @@ mod tests {
         assert!(
             registry
                 .backend_for_host("demo.127.0.0.1:9999", "127.0.0.1:8787")
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_connection_cannot_remove_replaced_route() {
+        let registry = ProxyRegistry::default();
+        registry
+            .set_route(
+                "demo".into(),
+                "127.0.0.1:3000".into(),
+                Some("old-connection".into()),
+                Some("token-old".into()),
+                Some("share-1".into()),
+                Some("Demo Share".into()),
+                false,
+                5,
+            )
+            .await;
+        registry
+            .set_route(
+                "demo".into(),
+                "127.0.0.1:3001".into(),
+                Some("new-connection".into()),
+                Some("token-new".into()),
+                Some("share-1".into()),
+                Some("Demo Share".into()),
+                false,
+                5,
+            )
+            .await;
+
+        registry
+            .remove_route_if_connection("demo", "old-connection")
+            .await;
+
+        let route = registry
+            .backend_for_host("demo.example.com", "example.com")
+            .await
+            .expect("new route should remain");
+        assert_eq!(route.backend, "127.0.0.1:3001");
+        assert_eq!(route.connection_id(), Some("new-connection"));
+
+        registry
+            .remove_route_if_connection("demo", "new-connection")
+            .await;
+        assert!(
+            registry
+                .backend_for_host("demo.example.com", "example.com")
                 .await
                 .is_none()
         );

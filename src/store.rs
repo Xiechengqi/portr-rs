@@ -7849,6 +7849,7 @@ mod tests {
             .set_route(
                 "aaa".into(),
                 "127.0.0.1:65530".into(),
+                None,
                 Some("token-share-renew".into()),
                 Some("share-renew".into()),
                 Some("share-share-renew".into()),
@@ -7997,6 +7998,7 @@ mod tests {
             .set_route(
                 market.subdomain.clone(),
                 "127.0.0.1:65530".into(),
+                None,
                 None,
                 None,
                 None,
@@ -9236,6 +9238,7 @@ mod tests {
             .set_route(
                 "old-sub".into(),
                 "http://127.0.0.1:1".into(),
+                None,
                 Some("token-old".into()),
                 Some("share-old".into()),
                 Some("Old Share".into()),
@@ -9247,6 +9250,7 @@ mod tests {
             .set_route(
                 "new-sub".into(),
                 "http://127.0.0.1:2".into(),
+                None,
                 Some("token-new".into()),
                 Some("share-new".into()),
                 Some("New Share".into()),
@@ -9403,6 +9407,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 false,
                 -1,
             )
@@ -9411,6 +9416,7 @@ mod tests {
             .set_route(
                 "fresh-sub".into(),
                 "127.0.0.1:5678".into(),
+                None,
                 None,
                 None,
                 None,

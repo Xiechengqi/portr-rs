@@ -193,6 +193,7 @@ impl server::Handler for ClientHandler {
             .set_route(
                 lease.subdomain.clone(),
                 backend.clone(),
+                Some(lease.connection_id.clone()),
                 share_token,
                 share_id,
                 lease.share.as_ref().map(|s| s.share_name.clone()),
@@ -238,7 +239,9 @@ impl server::Handler for ClientHandler {
             task.abort();
         }
         if let Some(lease) = self.lease.as_ref() {
-            self.proxy.remove_route(&lease.subdomain).await;
+            self.proxy
+                .remove_route_if_connection(&lease.subdomain, &lease.connection_id)
+                .await;
         }
         Ok(())
     }
@@ -253,7 +256,9 @@ impl server::Handler for ClientHandler {
             task.abort();
         }
         if let Some(lease) = self.lease.as_ref() {
-            self.proxy.remove_route(&lease.subdomain).await;
+            self.proxy
+                .remove_route_if_connection(&lease.subdomain, &lease.connection_id)
+                .await;
         }
         Ok(true)
     }
@@ -289,9 +294,11 @@ async fn serve_forward_listener(
         {
             Ok(channel) => channel,
             Err(err) => {
-                proxy.remove_route(&subdomain).await;
+                proxy
+                    .remove_route_if_connection(&subdomain, &connection_id)
+                    .await;
                 error!(
-                    "failed to open forwarded tcp channel: {} subdomain={} connection_id={}, route removed",
+                    "failed to open forwarded tcp channel: {} subdomain={} connection_id={}, matching route removed if still current",
                     err, subdomain, connection_id
                 );
                 return Ok(());
