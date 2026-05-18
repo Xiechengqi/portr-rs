@@ -1138,7 +1138,7 @@ function MarketPricingCell({ market, t }: { market: DashboardMarket; t: TFn }) {
   );
 }
 
-function MarketStatusCell({ market, t, locale, onEdit }: { market: DashboardMarket; t: TFn; locale: AppLocale; onEdit: (market: DashboardMarket) => void }) {
+function MarketStatusCell({ market, t, locale }: { market: DashboardMarket; t: TFn; locale: AppLocale }) {
   const limit = isUnlimited(market.parallelCapacity) ? "∞" : String(market.parallelCapacity || 0);
   const ageValue = formatAgeDaysOrHours(market.createdAt, locale);
   const onlineValue = market.online ? `${(market.onlineRate24h || 0).toFixed(1)}% / ${ageValue}` : ageValue;
@@ -1146,13 +1146,7 @@ function MarketStatusCell({ market, t, locale, onEdit }: { market: DashboardMark
   return (
     <div className="grid min-w-52 gap-2 text-sm">
       <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.shares")}</span><strong>{market.onlineShareCount || 0} / {market.shareCount || 0}</strong></div>
-      <div className={rowClass}>
-        <span className="mono-label text-muted-foreground">{t("dashboard.online")}</span>
-        <strong className="flex flex-wrap items-center gap-2" title={`${market.onlineMinutes24h || 0} / 1440 min · ${formatDateTime(market.createdAt)}`}>
-          {onlineValue}
-          <MarketEditAction market={market} onEdit={onEdit} />
-        </strong>
-      </div>
+      <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.online")}</span><strong title={`${market.onlineMinutes24h || 0} / 1440 min · ${formatDateTime(market.createdAt)}`}>{onlineValue}</strong></div>
       <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.parallel")}</span><strong>{market.activeRequests || 0}<span className="text-muted-foreground">/{limit}</span></strong></div>
       <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.usage")}</span><strong>{compactTokens(market.usageTokens)} / {formatUsdOneDecimal(market.usageAmountUsd)}</strong></div>
       <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.health")}</span><HealthDots entries={market.healthChecks} /></div>
@@ -1190,7 +1184,10 @@ export function MarketsTable({ markets, onChanged }: { markets: DashboardMarket[
                     <div className="min-w-0">
                       <div className="font-medium">{market.displayName || market.id}</div>
                       <div className="text-xs text-muted-foreground">{market.email}</div>
-                      <div className="mt-1"><StatusBadge active={market.online} label={marketStatusLabel(market, t)} /></div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <StatusBadge active={market.online} label={marketStatusLabel(market, t)} />
+                        <MarketEditAction market={market} onEdit={setEditingMarket} />
+                      </div>
                     </div>
                   </td>
                   <td className="px-4 py-3 align-middle">
@@ -1200,7 +1197,7 @@ export function MarketsTable({ markets, onChanged }: { markets: DashboardMarket[
                     </a>
                   </td>
                   <td className="px-4 py-3 align-middle"><MarketPricingCell market={market} t={t} /></td>
-                  <td className="px-4 py-3 align-middle"><MarketStatusCell market={market} t={t} locale={locale} onEdit={setEditingMarket} /></td>
+                  <td className="px-4 py-3 align-middle"><MarketStatusCell market={market} t={t} locale={locale} /></td>
                   <td className="px-4 py-3 align-middle text-lg text-muted-foreground">›</td>
                 </tr>
               )) : (
