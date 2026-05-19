@@ -523,6 +523,33 @@ function ShareEditDialog({
     }
   };
 
+  const handlePricingGlobalChange = (checked: boolean) => {
+    setPricingGlobal(checked);
+    if (!checked) return;
+    const nextGlobal = globalPriceInput || PRICE_APPS.map((app) => priceInputs[app.key]).find(Boolean) || "";
+    setGlobalPriceInput(nextGlobal);
+    if (!nextGlobal) return;
+    setPriceInputs((current) => {
+      const next = { ...current };
+      for (const app of PRICE_APPS) {
+        if (share?.support?.[app.key]) next[app.key] = nextGlobal;
+      }
+      return next;
+    });
+  };
+
+  const handleGlobalPriceInput = (value: string) => {
+    setGlobalPriceInput(value);
+    if (!pricingGlobal) return;
+    setPriceInputs((current) => {
+      const next = { ...current };
+      for (const app of PRICE_APPS) {
+        if (share?.support?.[app.key]) next[app.key] = value;
+      }
+      return next;
+    });
+  };
+
   const removeMarketEmail = (email: string) => {
     setSelectedMarketEmails((current) => current.filter((value) => value !== email));
   };
@@ -562,18 +589,15 @@ function ShareEditDialog({
 
   const pricingPayload = React.useMemo<Record<string, number>>(() => {
     const result: Record<string, number> = {};
-    if (pricingGlobal) {
-      const value = Number.parseInt(globalPriceInput, 10);
-      if (Number.isFinite(value) && value >= 1 && value <= 100) {
-        for (const app of PRICE_APPS) {
-          if (share?.support?.[app.key]) result[app.key] = value;
-        }
-      }
-      return result;
-    }
+    const globalValue = Number.parseInt(globalPriceInput, 10);
+    const hasValidGlobal = pricingGlobal && Number.isFinite(globalValue) && globalValue >= 1 && globalValue <= 100;
     for (const app of PRICE_APPS) {
+      if (!share?.support?.[app.key]) continue;
       const raw = priceInputs[app.key];
-      if (!raw || !raw.trim()) continue;
+      if (!raw || !raw.trim()) {
+        if (hasValidGlobal) result[app.key] = globalValue;
+        continue;
+      }
       const value = Number.parseInt(raw, 10);
       if (Number.isFinite(value) && value >= 1 && value <= 100) result[app.key] = value;
     }
@@ -586,8 +610,7 @@ function ShareEditDialog({
       const value = Number.parseInt(raw, 10);
       return !(Number.isFinite(value) && value >= 1 && value <= 100);
     };
-    if (pricingGlobal) return check(globalPriceInput);
-    return PRICE_APPS.some((app) => check(priceInputs[app.key]));
+    return (pricingGlobal && check(globalPriceInput)) || PRICE_APPS.some((app) => check(priceInputs[app.key]));
   }, [pricingGlobal, globalPriceInput, priceInputs]);
 
   const formInvalid =
@@ -833,12 +856,12 @@ function ShareEditDialog({
                   <div className="grid gap-3">
                     <Checkbox
                       isSelected={pricingGlobal}
-                      onChange={(value: boolean) => setPricingGlobal(value)}
+                      onChange={(value: boolean) => handlePricingGlobalChange(value)}
                       isDisabled={busy}
                     >
                       <Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>
                       <Checkbox.Content>
-                        <span className="text-sm">使用全局百分比（同值套到所有 app）</span>
+                        <span className="text-sm">使用全局百分比（可继续单独覆盖各 app）</span>
                       </Checkbox.Content>
                     </Checkbox>
                     {pricingGlobal ? (
@@ -848,35 +871,34 @@ function ShareEditDialog({
                         max={100}
                         step={1}
                         value={globalPriceInput}
-                        onChange={(event) => setGlobalPriceInput(event.target.value)}
+                        onChange={(event) => handleGlobalPriceInput(event.target.value)}
                         placeholder="未设置"
                       />
-                    ) : (
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        {PRICE_APPS.map((app) => {
-                          const supported = !!share?.support?.[app.key];
-                          const hint = providerHint(share?.appRuntimes?.[app.key]);
-                          return (
-                            <div key={app.key} className="grid gap-1">
-                              <span className="mono-label text-muted-foreground">{app.label}</span>
-                              <Input
-                                type="number"
-                                min={1}
-                                max={100}
-                                step={1}
-                                value={priceInputs[app.key]}
-                                disabled={!supported}
-                                placeholder={supported ? "未设置" : "无当前节点"}
-                                onChange={(event) =>
-                                  setPriceInputs((current) => ({ ...current, [app.key]: event.target.value }))
-                                }
-                              />
-                              <span className="truncate text-[11px] text-muted-foreground">{hint || "-"}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                    ) : null}
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      {PRICE_APPS.map((app) => {
+                        const supported = !!share?.support?.[app.key];
+                        const hint = providerHint(share?.appRuntimes?.[app.key]);
+                        return (
+                          <div key={app.key} className="grid gap-1">
+                            <span className="mono-label text-muted-foreground">{app.label}</span>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={100}
+                              step={1}
+                              value={priceInputs[app.key]}
+                              disabled={!supported}
+                              placeholder={supported ? "未设置" : "无当前节点"}
+                              onChange={(event) =>
+                                setPriceInputs((current) => ({ ...current, [app.key]: event.target.value }))
+                              }
+                            />
+                            <span className="truncate text-[11px] text-muted-foreground">{hint || "-"}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </FieldGroup>
               </Modal.Body>

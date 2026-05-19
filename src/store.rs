@@ -1411,25 +1411,30 @@ impl AppStore {
         patch: ShareSettingsPatch,
     ) -> Result<ShareSettingsUpdateResponse, AppError> {
         let current_user_email = normalize_email(current_user_email)?;
-        let patch = normalize_share_settings_patch(patch, Some(&current_user_email))?;
-        if share_settings_patch_is_empty(&patch) {
-            return Err(AppError::BadRequest("share settings patch is empty".into()));
-        }
-
         let now = Utc::now();
         let conn = self.conn.lock().await;
-        let (installation_id, owner_email): (String, String) = conn
+        let (installation_id, owner_email, shared_with_emails): (String, String, Vec<String>) = conn
             .query_row(
-                "SELECT installation_id, owner_email FROM shares WHERE share_id = ?1",
+                "SELECT installation_id, owner_email, shared_with_emails_json FROM shares WHERE share_id = ?1",
                 params![share_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, parse_string_vec(row.get(2)?)?)),
             )
             .optional()
             .map_err(|e| AppError::Internal(format!("query share owner failed: {e}")))?
             .ok_or_else(|| AppError::NotFound("share not found".into()))?;
-        if owner_email != current_user_email {
+        let owner_email = normalize_email(&owner_email)?;
+        let shared_with_emails = normalize_email_list(&shared_with_emails, &owner_email);
+        let patch = normalize_share_settings_patch(patch, Some(&owner_email))?;
+        if share_settings_patch_is_empty(&patch) {
+            return Err(AppError::BadRequest("share settings patch is empty".into()));
+        }
+        if owner_email != current_user_email
+            && !shared_with_emails
+                .iter()
+                .any(|email| email == &current_user_email)
+        {
             return Err(AppError::Forbidden(
-                "only share owner can edit share settings".into(),
+                "only share owner or shared user can edit share settings".into(),
             ));
         }
         if let Some(active) = get_active_share_edit(&conn, share_id)? {
@@ -7385,7 +7390,14 @@ fn share_visible_to_email(share: &ShareDescriptor, viewer_email: Option<&str>) -
 }
 
 fn can_manage_share(share: &ShareDescriptor, viewer_email: Option<&str>) -> bool {
-    share.owner_email.as_deref() == viewer_email
+    let Some(viewer_email) = viewer_email else {
+        return false;
+    };
+    share.owner_email.as_deref() == Some(viewer_email)
+        || share
+            .shared_with_emails
+            .iter()
+            .any(|email| email == viewer_email)
 }
 
 fn enforce_share_owner(
@@ -7675,6 +7687,22 @@ mod tests {
             ],
         )
         .expect("insert share");
+    }
+
+    async fn set_share_shared_with_emails(store: &AppStore, share_id: &str, emails: &[&str]) {
+        let conn = store.conn.lock().await;
+        let emails = emails
+            .iter()
+            .map(|email| email.to_string())
+            .collect::<Vec<_>>();
+        conn.execute(
+            "UPDATE shares SET shared_with_emails_json = ?2 WHERE share_id = ?1",
+            params![
+                share_id,
+                serde_json::to_string(&emails).expect("serialize shared emails")
+            ],
+        )
+        .expect("update share shared emails");
     }
 
     async fn insert_health_check(
@@ -9593,6 +9621,100 @@ mod tests {
         assert_eq!(share.market_links[0].display_name, "Main Market");
         assert_eq!(share.market_links[0].email, "market@example.com");
         assert!(share.unknown_market_emails.is_empty());
+
+        let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
+    async fn shared_email_can_manage_share_in_dashboard() {
+        let (store, config) = setup_store("dashboard-shared-manager").await;
+        insert_installation(&store, "inst-1").await;
+        insert_share(&store, "inst-1", "share-shared", "shared-sub", "active").await;
+        set_share_shared_with_emails(&store, "share-shared", &["shared@example.com"]).await;
+
+        let server_geo = ServerGeo {
+            lat: None,
+            lon: None,
+        };
+        let proxy = ProxyRegistry::default();
+        let snapshot = store
+            .dashboard_snapshot(&config, &server_geo, &proxy, Some("shared@example.com"))
+            .await
+            .expect("dashboard snapshot for shared manager");
+        let share = snapshot.clients[0].share.as_ref().expect("share view");
+
+        assert!(share.can_manage);
+        assert!(share.can_edit_settings);
+        assert_eq!(share.shared_with_emails, vec!["shared@example.com"]);
+        assert_eq!(share.share_token, "token");
+
+        let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
+    async fn shared_email_can_create_share_settings_edit() {
+        let (store, config) = setup_store("shared-share-settings-edit").await;
+        insert_installation(&store, "inst-1").await;
+        insert_share(&store, "inst-1", "share-edit", "edit-sub", "active").await;
+        set_share_shared_with_emails(&store, "share-edit", &["shared@example.com"]).await;
+
+        let response = store
+            .create_share_settings_edit(
+                "share-edit",
+                "shared@example.com",
+                ShareSettingsPatch {
+                    description: Some(Some("updated by shared user".into())),
+                    shared_with_emails: Some(vec![
+                        "owner@example.com".into(),
+                        "shared@example.com".into(),
+                        "other@example.com".into(),
+                    ]),
+                    ..ShareSettingsPatch::default()
+                },
+            )
+            .await
+            .expect("shared email can create edit");
+
+        assert!(response.ok);
+        assert_eq!(response.edit.share_id, "share-edit");
+        assert_eq!(response.edit.installation_id, "inst-1");
+        assert_eq!(response.edit.status, "pending");
+        assert_eq!(response.edit.created_by_email, "shared@example.com");
+        assert_eq!(
+            response.edit.patch.description,
+            Some(Some("updated by shared user".into()))
+        );
+        assert_eq!(
+            response.edit.patch.shared_with_emails,
+            Some(vec![
+                "shared@example.com".into(),
+                "other@example.com".into()
+            ])
+        );
+
+        let _ = std::fs::remove_file(PathBuf::from(config.db_path));
+    }
+
+    #[tokio::test]
+    async fn unshared_email_cannot_create_share_settings_edit() {
+        let (store, config) = setup_store("unshared-share-settings-edit").await;
+        insert_installation(&store, "inst-1").await;
+        insert_share(&store, "inst-1", "share-edit", "edit-sub", "active").await;
+        set_share_shared_with_emails(&store, "share-edit", &["shared@example.com"]).await;
+
+        let err = store
+            .create_share_settings_edit(
+                "share-edit",
+                "stranger@example.com",
+                ShareSettingsPatch {
+                    description: Some(Some("unauthorized update".into())),
+                    ..ShareSettingsPatch::default()
+                },
+            )
+            .await
+            .expect_err("unshared email should be rejected");
+
+        assert!(err.to_string().contains("owner or shared user"));
 
         let _ = std::fs::remove_file(PathBuf::from(config.db_path));
     }
