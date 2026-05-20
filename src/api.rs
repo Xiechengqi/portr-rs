@@ -39,6 +39,7 @@ use crate::models::{
     DashboardResponse, DashboardTickerShare, GetInstallationOwnerEmailQuery,
     GetInstallationOwnerEmailResponse, HealthResponse, IssueLeaseRequest, IssueLeaseResponse,
     MarketDisabledSharesUpdateRequest, MarketDisabledSharesUpdateResponse,
+    MarketMaintenanceUpdateRequest, MarketMaintenanceUpdateResponse,
     MarketNotificationEmailLogView, MarketNotificationEmailRequest,
     MarketNotificationEmailResponse, MarketRequestLogBatchSyncRequest, MarketShareView,
     MarketsResponse, PostBoardMessageRequest, PublicMapPointsResponse, RefreshSessionRequest,
@@ -51,11 +52,11 @@ use crate::models::{
     VerifyEmailCodeRequest, VerifyEmailCodeResponse,
 };
 use crate::proxy::{market_proxy_handler, proxy_handler};
+use crate::recent_traffic::{RecentRequestEvent, RecentTrafficSnapshot};
 use crate::scheduling_signals::{
     ShareFeedbackKind, ShareFeedbackRequest, ShareFeedbackResponse, ShareHeadroomEntry,
     ShareHeadroomRequest, ShareHeadroomResponse,
 };
-use crate::recent_traffic::{RecentRequestEvent, RecentTrafficSnapshot};
 use crate::store::BoardAuthor;
 
 const REGIONS: &str = include_str!("../regions");
@@ -108,6 +109,10 @@ pub fn router(state: ServerState) -> Router {
         .route(
             "/v1/admin/markets/:market_email/disabled-shares",
             patch(admin_update_market_disabled_shares),
+        )
+        .route(
+            "/v1/admin/markets/:market_email/maintenance",
+            patch(admin_update_market_maintenance),
         )
         .route(
             "/v1/market/request-logs/batch",
@@ -320,7 +325,10 @@ async fn market_shares_feedback(
     Json(input): Json<ShareFeedbackRequest>,
 ) -> Result<Json<ShareFeedbackResponse>, AppError> {
     let _market = authenticate_market(&state, &headers, "market:shares:read").await?;
-    let owner = state.store.lookup_share_owner_email(&input.share_id).await?;
+    let owner = state
+        .store
+        .lookup_share_owner_email(&input.share_id)
+        .await?;
     let Some(owner_email) = owner else {
         return Ok(Json(ShareFeedbackResponse {
             ok: false,
@@ -362,12 +370,14 @@ async fn admin_market_linked_shares(
     Path(market_email): Path<String>,
 ) -> Result<Json<Vec<MarketShareView>>, AppError> {
     let current_user_email = require_session_email(&state, &headers).await?;
+    let is_admin = state.dynamic.read().await.is_admin(&current_user_email);
     Ok(Json(
         state
             .store
             .list_manageable_market_shares(
                 &market_email,
                 &current_user_email,
+                is_admin,
                 &state.proxy.active_subdomains().await.into_iter().collect(),
                 &state.proxy.inflight_by_share().await,
             )
@@ -383,9 +393,10 @@ async fn admin_update_market_disabled_shares(
     Json(input): Json<MarketDisabledSharesUpdateRequest>,
 ) -> Result<Json<MarketDisabledSharesUpdateResponse>, AppError> {
     let current_user_email = require_session_email(&state, &headers).await?;
+    let is_admin = state.dynamic.read().await.is_admin(&current_user_email);
     let response = state
         .store
-        .update_market_disabled_shares(&market_email, &current_user_email, input)
+        .update_market_disabled_shares(&market_email, &current_user_email, is_admin, input)
         .await?;
     let metadata = extract_client_metadata(&headers, addr);
     let payload = serde_json::json!({
@@ -397,6 +408,36 @@ async fn admin_update_market_disabled_shares(
         .record_admin_audit(
             Some(&current_user_email),
             "market.disabled_shares.update",
+            Some(&payload),
+            metadata.ip.as_deref(),
+        )
+        .await;
+    Ok(Json(response))
+}
+
+async fn admin_update_market_maintenance(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(market_email): Path<String>,
+    Json(input): Json<MarketMaintenanceUpdateRequest>,
+) -> Result<Json<MarketMaintenanceUpdateResponse>, AppError> {
+    let current_user_email = require_session_email(&state, &headers).await?;
+    let is_admin = state.dynamic.read().await.is_admin(&current_user_email);
+    let response = state
+        .store
+        .update_market_maintenance(&market_email, &current_user_email, is_admin, input)
+        .await?;
+    let metadata = extract_client_metadata(&headers, addr);
+    let payload = serde_json::json!({
+        "marketEmail": market_email,
+        "maintenanceEnabled": response.maintenance_enabled,
+    });
+    let _ = state
+        .store
+        .record_admin_audit(
+            Some(&current_user_email),
+            "market.maintenance.update",
             Some(&payload),
             metadata.ip.as_deref(),
         )
@@ -709,6 +750,22 @@ fn share_log_to_ticker_event(
         started_at: chrono::DateTime::<chrono::Utc>::from_timestamp(log.created_at, 0)
             .unwrap_or_else(chrono::Utc::now),
         is_inflight: false,
+        is_health_check: log.is_health_check,
+        health_status: log.is_health_check.then(|| {
+            if (200..400).contains(&log.status_code) {
+                "success".to_string()
+            } else {
+                "failed".to_string()
+            }
+        }),
+        health_app_type: log.is_health_check.then(|| log.app_type.clone()),
+        health_model: log.is_health_check.then(|| {
+            if log.requested_model.is_empty() {
+                log.model.clone()
+            } else {
+                log.requested_model.clone()
+            }
+        }),
     }
 }
 
@@ -722,6 +779,10 @@ fn market_log_to_ticker_event(log: &DashboardMarketRequestLogView) -> RecentRequ
         user_country_iso3: log.user_country_iso3.clone(),
         started_at: parse_dashboard_log_time(&log.created_at),
         is_inflight: false,
+        is_health_check: false,
+        health_status: None,
+        health_app_type: None,
+        health_model: None,
     }
 }
 
@@ -945,6 +1006,10 @@ mod tests {
             user_country_iso3: Some("USA".into()),
             started_at: Utc::now(),
             is_inflight: true,
+            is_health_check: false,
+            health_status: None,
+            health_app_type: None,
+            health_model: None,
         };
         let snapshot = RecentTrafficSnapshot {
             country_counts: HashMap::new(),
@@ -1103,6 +1168,10 @@ mod tests {
             user_country_iso3: Some("USA".into()),
             started_at: Utc::now(),
             is_inflight: true,
+            is_health_check: false,
+            health_status: None,
+            health_app_type: None,
+            health_model: None,
         };
         let snapshot = RecentTrafficSnapshot {
             country_counts: HashMap::new(),
@@ -1168,6 +1237,7 @@ mod tests {
             user_country: None,
             user_country_iso3: None,
             created_at,
+            is_health_check: false,
         }
     }
 

@@ -28,18 +28,19 @@ use crate::models::{
     DashboardTickerShare, GetInstallationOwnerEmailQuery, GetInstallationOwnerEmailResponse,
     HealthCheckEntry, Installation, InstallationView, IssueLeaseRequest, IssueLeaseResponse,
     LatLonPoint, MarketDisabledSharesUpdateRequest, MarketDisabledSharesUpdateResponse,
-    MarketLinkedShareView, MarketRegistryRecord, MarketRequestLogBatchSyncRequest,
-    MarketRequestLogEntry, MarketShareView, PublicMapClientPoint, PublicMapPointsResponse, ShareSignals,
-    PublicMarketConfig, RefreshSessionRequest, RegisterInstallationRequest,
-    RegisterInstallationResponse, RegisterMarketRequest, RequestEmailCodeRequest,
-    RequestEmailCodeResponse, SessionStatusResponse, ShareAppRuntimes, ShareBatchSyncRequest,
-    ShareClaimPayload, ShareClaimSubdomainRequest, ShareDeleteRequest, ShareDescriptor,
-    ShareEditAckRequest, ShareEditView, ShareHeartbeatRequest, ShareMarketLinkView,
-    SharePendingEditsRequest, SharePendingEditsResponse, ShareRequestLogBatchSyncRequest,
-    ShareRequestLogEntry, ShareRequestLogFetchResponse, ShareRuntimeRefreshPayload,
-    ShareRuntimeRefreshRequest, ShareRuntimeSnapshotResponse, ShareSettingsPatch,
-    ShareSettingsUpdateResponse, ShareSupport, ShareSyncRequest, ShareUpstreamProvider, ShareView,
-    TunnelLease, VerifyEmailCodeRequest, VerifyEmailCodeResponse,
+    MarketLinkedShareView, MarketMaintenanceUpdateRequest, MarketMaintenanceUpdateResponse,
+    MarketRegistryRecord, MarketRequestLogBatchSyncRequest, MarketRequestLogEntry, MarketShareView,
+    ModelHealthSummary, PublicMapClientPoint, PublicMapPointsResponse, PublicMarketConfig,
+    RefreshSessionRequest, RegisterInstallationRequest, RegisterInstallationResponse,
+    RegisterMarketRequest, RequestEmailCodeRequest, RequestEmailCodeResponse,
+    SessionStatusResponse, ShareAppRuntimes, ShareBatchSyncRequest, ShareClaimPayload,
+    ShareClaimSubdomainRequest, ShareDeleteRequest, ShareDescriptor, ShareEditAckRequest,
+    ShareEditView, ShareHeartbeatRequest, ShareMarketLinkView, ShareModelHealthCheckEntry,
+    ShareModelHealthSummary, SharePendingEditsRequest, SharePendingEditsResponse,
+    ShareRequestLogBatchSyncRequest, ShareRequestLogEntry, ShareRequestLogFetchResponse,
+    ShareRuntimeRefreshPayload, ShareRuntimeRefreshRequest, ShareRuntimeSnapshotResponse,
+    ShareSettingsPatch, ShareSettingsUpdateResponse, ShareSignals, ShareSupport, ShareSyncRequest,
+    ShareUpstreamProvider, ShareView, TunnelLease, VerifyEmailCodeRequest, VerifyEmailCodeResponse,
 };
 use crate::proxy::ProxyRegistry;
 
@@ -128,7 +129,10 @@ const GEO_STABLE_MIN_SWITCH_SECS: i64 = 30 * 60;
 #[derive(Debug, Clone)]
 pub struct ShareRouteTarget {
     pub share_id: String,
+    pub installation_id: String,
+    pub share_name: String,
     pub subdomain: String,
+    pub app_runtimes: ShareAppRuntimes,
 }
 
 #[derive(Debug, Default)]
@@ -1748,6 +1752,7 @@ impl AppStore {
             online_by_share,
             recent_logs,
             market_logs,
+            model_health_by_share,
         ) = {
             let conn = self.conn.lock().await;
             (
@@ -1758,6 +1763,7 @@ impl AppStore {
                 list_online_minutes_24h(&conn)?,
                 list_recent_share_request_logs(&conn, SHARE_REQUEST_LOG_RECOVERY_LIMIT)?,
                 list_recent_market_request_logs(&conn, 200)?,
+                list_model_health_summaries(&conn)?,
             )
         };
         let market_logs_by_market = market_logs.iter().cloned().fold(
@@ -1928,6 +1934,10 @@ impl AppStore {
                 } else {
                     Vec::new()
                 };
+                let model_health = model_health_by_share
+                    .get(&share.share_id)
+                    .cloned()
+                    .unwrap_or_default();
                 ShareView {
                     share_id: share.share_id,
                     share_name: share.share_name,
@@ -1976,6 +1986,7 @@ impl AppStore {
                     online_rate_24h,
                     recent_requests,
                     health_checks,
+                    model_health,
                 }
             })
             .collect::<Vec<_>>();
@@ -2420,7 +2431,7 @@ impl AppStore {
         let conn = self.conn.lock().await;
         let mut stmt = conn
             .prepare(
-                "SELECT share_id, subdomain
+                "SELECT share_id, installation_id, share_name, subdomain, app_runtimes_json
                  FROM shares
                  WHERE subdomain IS NOT NULL
                    AND subdomain != ''
@@ -2433,7 +2444,10 @@ impl AppStore {
             .query_map([], |row| {
                 Ok(ShareRouteTarget {
                     share_id: row.get(0)?,
-                    subdomain: row.get(1)?,
+                    installation_id: row.get(1)?,
+                    share_name: row.get(2)?,
+                    subdomain: row.get(3)?,
+                    app_runtimes: parse_app_runtimes(row.get(4)?)?,
                 })
             })
             .map_err(|e| AppError::Internal(format!("query route targets failed: {e}")))?;
@@ -2475,8 +2489,10 @@ impl AppStore {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|e| AppError::Internal(format!("serialize market pricing failed: {e}")))?;
-        let id = get_market_by_email(&conn, &email)?
-            .map(|market| market.id)
+        let existing_market = get_market_by_email(&conn, &email)?;
+        let id = existing_market
+            .as_ref()
+            .map(|market| market.id.clone())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let scopes_json = serde_json::to_string(MARKET_DEFAULT_SCOPES)
             .map_err(|e| AppError::Internal(format!("serialize market scopes failed: {e}")))?;
@@ -2516,6 +2532,11 @@ impl AppStore {
             subdomain,
             public_base_url: public_base_url.to_string(),
             status: "active".to_string(),
+            maintenance_enabled: existing_market
+                .as_ref()
+                .map(|market| market.maintenance_enabled)
+                .unwrap_or(false),
+            maintenance_message: existing_market.and_then(|market| market.maintenance_message),
             pricing_summary: input.pricing_summary,
         })
     }
@@ -2524,7 +2545,8 @@ impl AppStore {
         let conn = self.conn.lock().await;
         let mut stmt = conn
             .prepare(
-                "SELECT id, display_name, email, subdomain, public_base_url, status, pricing_json
+                "SELECT id, display_name, email, subdomain, public_base_url, status,
+                        COALESCE(maintenance_enabled, 0), maintenance_message, pricing_json
                  FROM router_markets
                  WHERE status = 'active' AND listed = 1
                  ORDER BY display_name ASC, subdomain ASC",
@@ -2539,7 +2561,9 @@ impl AppStore {
                     subdomain: row.get(3)?,
                     public_base_url: row.get(4)?,
                     status: row.get(5)?,
-                    pricing_summary: parse_json_value(row.get(6)?)?,
+                    maintenance_enabled: row.get::<_, i64>(6)? != 0,
+                    maintenance_message: row.get(7)?,
+                    pricing_summary: parse_json_value(row.get(8)?)?,
                 })
             })
             .map_err(|e| AppError::Internal(format!("query public markets failed: {e}")))?;
@@ -2650,6 +2674,30 @@ impl AppStore {
         let mut count = 0;
         for log in input.logs {
             validate_market_request_log(&log)?;
+            if is_failed_market_model_log(&log) {
+                if let (Some(share_id), Some(subdomain)) =
+                    (log.share_id.clone(), log.share_subdomain.clone())
+                {
+                    let check = ShareModelHealthCheckEntry {
+                        request_id: format!("market-failure:{}", log.request_id),
+                        share_id,
+                        subdomain,
+                        app_type: log.request_agent.clone(),
+                        requested_model: log.requested_model.clone(),
+                        actual_model: log.actual_model.clone(),
+                        status: "failed".to_string(),
+                        status_code: log.status_code,
+                        latency_ms: log.latency_ms.unwrap_or(0),
+                        first_token_ms: None,
+                        error_message: Some(log.status.clone()),
+                        checked_at: DateTime::parse_from_rfc3339(&log.created_at)
+                            .map(|dt| dt.timestamp())
+                            .unwrap_or_else(|_| Utc::now().timestamp()),
+                        source: "market_failure".to_string(),
+                    };
+                    record_share_model_health_check_conn(&tx, &check)?;
+                }
+            }
             upsert_market_request_log_tx(&tx, market, log)?;
             count += 1;
         }
@@ -2669,6 +2717,7 @@ impl AppStore {
         let conn = self.conn.lock().await;
         let online_minutes = list_online_minutes_24h(&conn)?;
         let samples_10m = list_online_minutes_10m(&conn)?;
+        let model_health_by_share = list_model_health_summaries(&conn)?;
         let market_email_lower = market_email.to_ascii_lowercase();
         let mut stmt = conn
             .prepare(
@@ -2703,7 +2752,16 @@ impl AppStore {
                     .map(|minutes| *minutes as f64 / ONLINE_WINDOW_MINUTES as f64)
                     .unwrap_or(0.0);
                 let samples = samples_10m.get(&share_id).copied().unwrap_or(0);
-                let upstream_provider: Option<ShareUpstreamProvider> = parse_upstream_provider(row.get(16)?)?;
+                let upstream_provider: Option<ShareUpstreamProvider> =
+                    parse_upstream_provider(row.get(16)?)?;
+                let model_health = model_health_by_share
+                    .get(&share_id)
+                    .cloned()
+                    .unwrap_or_default();
+                let app_runtimes = filter_app_runtimes_by_model_health(
+                    parse_app_runtimes(row.get(17)?)?,
+                    &model_health,
+                );
                 let quota_health = crate::scheduling_signals::compute_quota_health(
                     upstream_provider.as_ref().and_then(|p| p.quota.as_ref()),
                     now,
@@ -2741,7 +2799,8 @@ impl AppStore {
                             gemini: row.get::<_, i64>(15)? != 0,
                         },
                         upstream_provider,
-                        app_runtimes: parse_app_runtimes(row.get(17)?)?,
+                        app_runtimes,
+                        model_health,
                         signals: ShareSignals {
                             quota_health,
                             stability,
@@ -2803,8 +2862,8 @@ impl AppStore {
             .map_err(|e| AppError::Internal(format!("query parallel_limits failed: {e}")))?;
         let mut out = HashMap::new();
         for r in rows {
-            let (id, limit) = r
-                .map_err(|e| AppError::Internal(format!("read parallel_limit row failed: {e}")))?;
+            let (id, limit) =
+                r.map_err(|e| AppError::Internal(format!("read parallel_limit row failed: {e}")))?;
             out.insert(id, limit);
         }
         Ok(out)
@@ -2833,10 +2892,11 @@ impl AppStore {
         &self,
         market_email: &str,
         current_user_email: &str,
+        is_admin: bool,
         active_subdomains: &HashSet<String>,
         inflight_by_share: &HashMap<String, usize>,
     ) -> Result<Vec<MarketShareView>, AppError> {
-        self.require_market_owner(market_email, current_user_email)
+        self.require_market_manager(market_email, current_user_email, is_admin)
             .await?;
         self.list_market_shares(market_email, "main", active_subdomains, inflight_by_share)
             .await
@@ -2846,9 +2906,10 @@ impl AppStore {
         &self,
         market_email: &str,
         current_user_email: &str,
+        is_admin: bool,
         input: MarketDisabledSharesUpdateRequest,
     ) -> Result<MarketDisabledSharesUpdateResponse, AppError> {
-        self.require_market_owner(market_email, current_user_email)
+        self.require_market_manager(market_email, current_user_email, is_admin)
             .await?;
         let normalized_market_email = normalize_email(market_email)?;
         let mut disabled_share_ids = input
@@ -2897,18 +2958,73 @@ impl AppStore {
         })
     }
 
-    async fn require_market_owner(
+    pub async fn update_market_maintenance(
         &self,
         market_email: &str,
         current_user_email: &str,
+        is_admin: bool,
+        input: MarketMaintenanceUpdateRequest,
+    ) -> Result<MarketMaintenanceUpdateResponse, AppError> {
+        self.require_market_manager(market_email, current_user_email, is_admin)
+            .await?;
+        let normalized_market_email = normalize_email(market_email)?;
+        let message = input
+            .maintenance_message
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if message
+            .as_ref()
+            .map(|value| value.chars().count() > 240)
+            .unwrap_or(false)
+        {
+            return Err(AppError::BadRequest(
+                "maintenance message is too long".into(),
+            ));
+        }
+        let now = Utc::now().to_rfc3339();
+        let conn = self.conn.lock().await;
+        let changed = conn
+            .execute(
+                "UPDATE router_markets
+                 SET maintenance_enabled = ?2,
+                     maintenance_message = ?3,
+                     updated_at = ?4
+                 WHERE lower(email) = lower(?1)",
+                params![
+                    normalized_market_email,
+                    if input.maintenance_enabled { 1 } else { 0 },
+                    message,
+                    now,
+                ],
+            )
+            .map_err(|e| AppError::Internal(format!("update market maintenance failed: {e}")))?;
+        if changed == 0 {
+            return Err(AppError::NotFound("market not found".into()));
+        }
+        Ok(MarketMaintenanceUpdateResponse {
+            ok: true,
+            maintenance_enabled: input.maintenance_enabled,
+            maintenance_message: if input.maintenance_enabled {
+                message
+            } else {
+                None
+            },
+        })
+    }
+
+    async fn require_market_manager(
+        &self,
+        market_email: &str,
+        current_user_email: &str,
+        is_admin: bool,
     ) -> Result<(), AppError> {
         let normalized_market_email = normalize_email(market_email)?;
         let conn = self.conn.lock().await;
         let market = get_market_by_email(&conn, &normalized_market_email)?
             .ok_or_else(|| AppError::NotFound("market not found".into()))?;
-        if !market.email.eq_ignore_ascii_case(current_user_email) {
+        if !is_admin && !market.email.eq_ignore_ascii_case(current_user_email) {
             return Err(AppError::Forbidden(
-                "only market owner can manage disabled shares".into(),
+                "only router admin or market owner can manage this market".into(),
             ));
         }
         Ok(())
@@ -2997,6 +3113,24 @@ impl AppStore {
         )
         .map_err(|e| AppError::Internal(format!("prune route health failed: {e}")))?;
         Ok(())
+    }
+
+    pub async fn record_share_model_health_check(
+        &self,
+        check: ShareModelHealthCheckEntry,
+    ) -> Result<(), AppError> {
+        let conn = self.conn.lock().await;
+        record_share_model_health_check_conn(&conn, &check)?;
+        Ok(())
+    }
+
+    pub async fn record_share_health_request_log(
+        &self,
+        installation_id: &str,
+        log: ShareRequestLogEntry,
+    ) -> Result<(), AppError> {
+        let conn = self.conn.lock().await;
+        upsert_share_request_log_tx(&conn, installation_id, log)
     }
 
     pub async fn record_share_runtime_snapshot(
@@ -4093,8 +4227,8 @@ fn upsert_share_request_log_tx(
             app_type, model, request_model, request_agent, requested_model, actual_model, actual_model_source,
             status_code, latency_ms, first_token_ms,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-            is_streaming, session_id, user_country, user_country_iso3, created_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+            is_streaming, session_id, user_country, user_country_iso3, is_health_check, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
         ON CONFLICT(request_id) DO UPDATE SET
             installation_id = excluded.installation_id,
             share_id = excluded.share_id,
@@ -4119,6 +4253,7 @@ fn upsert_share_request_log_tx(
             session_id = excluded.session_id,
             user_country = COALESCE(excluded.user_country, share_request_logs.user_country),
             user_country_iso3 = COALESCE(excluded.user_country_iso3, share_request_logs.user_country_iso3),
+            is_health_check = excluded.is_health_check,
             created_at = excluded.created_at",
         params![
             log.request_id,
@@ -4145,6 +4280,7 @@ fn upsert_share_request_log_tx(
             log.session_id,
             log.user_country,
             log.user_country_iso3,
+            i64::from(log.is_health_check as u8),
             log.created_at,
         ],
     )
@@ -4343,6 +4479,7 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             session_id TEXT,
             user_country TEXT,
             user_country_iso3 TEXT,
+            is_health_check INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL
         );
 
@@ -4351,6 +4488,38 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             share_id TEXT NOT NULL,
             checked_at INTEGER NOT NULL,
             is_healthy INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS share_model_health_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL UNIQUE,
+            share_id TEXT NOT NULL,
+            subdomain TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            requested_model TEXT NOT NULL,
+            actual_model TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            status_code INTEGER,
+            latency_ms INTEGER NOT NULL DEFAULT 0,
+            first_token_ms INTEGER,
+            error_message TEXT,
+            checked_at INTEGER NOT NULL,
+            source TEXT NOT NULL DEFAULT 'scheduled'
+        );
+
+        CREATE TABLE IF NOT EXISTS share_model_health_state (
+            share_id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            requested_model TEXT NOT NULL,
+            actual_model TEXT NOT NULL DEFAULT '',
+            last_status TEXT NOT NULL,
+            last_success_at INTEGER,
+            last_failed_at INTEGER,
+            last_checked_at INTEGER NOT NULL,
+            recent_results_json TEXT NOT NULL DEFAULT '[]',
+            error_message TEXT,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (share_id, app_type, requested_model)
         );
 
         CREATE TABLE IF NOT EXISTS share_edit_requests (
@@ -4445,6 +4614,8 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
             public_base_url TEXT NOT NULL,
             scopes_json TEXT NOT NULL DEFAULT '[\"market:shares:read\",\"market:proxy:use\",\"market:email:notify\"]',
             pricing_json TEXT,
+            maintenance_enabled INTEGER NOT NULL DEFAULT 0,
+            maintenance_message TEXT,
             status TEXT NOT NULL DEFAULT 'active',
             listed INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
@@ -4502,6 +4673,8 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_subdomain_unique ON shares(subdomain) WHERE subdomain IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_share_request_logs_share_id ON share_request_logs(share_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_share_health_checks ON share_health_checks(share_id, checked_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_share_model_health_checks_share ON share_model_health_checks(share_id, app_type, requested_model, checked_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_share_model_health_state_share ON share_model_health_state(share_id, app_type, last_status);
         CREATE INDEX IF NOT EXISTS idx_dashboard_presence_last_seen ON dashboard_presence(last_seen_at DESC);
         CREATE INDEX IF NOT EXISTS idx_email_send_logs_created_at ON email_send_logs(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_request_nonces_created_at ON request_nonces(created_at DESC);
@@ -4883,6 +5056,12 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
     add_column_if_missing(conn, "share_request_logs", "user_country_iso3", "TEXT")?;
     add_column_if_missing(
         conn,
+        "share_request_logs",
+        "is_health_check",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(
+        conn,
         "market_request_logs",
         "request_agent",
         "TEXT NOT NULL DEFAULT ''",
@@ -4908,6 +5087,13 @@ fn init_schema(conn: &Connection) -> Result<(), AppError> {
     add_column_if_missing(conn, "market_request_logs", "user_country", "TEXT")?;
     add_column_if_missing(conn, "market_request_logs", "user_country_iso3", "TEXT")?;
     add_column_if_missing(conn, "router_markets", "pricing_json", "TEXT")?;
+    add_column_if_missing(
+        conn,
+        "router_markets",
+        "maintenance_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(conn, "router_markets", "maintenance_message", "TEXT")?;
     conn.execute(
         "UPDATE installations
          SET owner_email = (
@@ -5721,6 +5907,222 @@ fn parse_json_value(value: Option<String>) -> Result<Option<serde_json::Value>, 
     })
 }
 
+fn normalize_model_health_status(status: &str) -> &'static str {
+    if status.eq_ignore_ascii_case("success") {
+        "success"
+    } else if status.eq_ignore_ascii_case("skipped") {
+        "skipped"
+    } else {
+        "failed"
+    }
+}
+
+fn record_share_model_health_check_conn(
+    conn: &Connection,
+    check: &ShareModelHealthCheckEntry,
+) -> Result<(), AppError> {
+    let status = normalize_model_health_status(&check.status);
+    conn.execute(
+        "INSERT INTO share_model_health_checks (
+            request_id, share_id, subdomain, app_type, requested_model, actual_model,
+            status, status_code, latency_ms, first_token_ms, error_message, checked_at, source
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT(request_id) DO UPDATE SET
+            status = excluded.status,
+            status_code = excluded.status_code,
+            latency_ms = excluded.latency_ms,
+            first_token_ms = excluded.first_token_ms,
+            error_message = excluded.error_message,
+            checked_at = excluded.checked_at,
+            source = excluded.source",
+        params![
+            check.request_id,
+            check.share_id,
+            check.subdomain,
+            check.app_type,
+            check.requested_model,
+            check.actual_model,
+            status,
+            check.status_code.map(i64::from),
+            check.latency_ms as i64,
+            check.first_token_ms.map(|v| v as i64),
+            check.error_message,
+            check.checked_at,
+            check.source,
+        ],
+    )
+    .map_err(|e| AppError::Internal(format!("insert model health check failed: {e}")))?;
+    let recent_results = recent_model_health_results(
+        conn,
+        &check.share_id,
+        &check.app_type,
+        &check.requested_model,
+    )?;
+    let recent_json = serde_json::to_string(&recent_results)
+        .map_err(|e| AppError::Internal(format!("serialize model health results failed: {e}")))?;
+    conn.execute(
+        "INSERT INTO share_model_health_state (
+            share_id, app_type, requested_model, actual_model, last_status,
+            last_success_at, last_failed_at, last_checked_at, recent_results_json,
+            error_message, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5,
+            CASE WHEN ?5 = 'success' THEN ?6 ELSE NULL END,
+            CASE WHEN ?5 = 'failed' THEN ?6 ELSE NULL END,
+            ?6, ?7, ?8, ?6)
+         ON CONFLICT(share_id, app_type, requested_model) DO UPDATE SET
+            actual_model = excluded.actual_model,
+            last_status = excluded.last_status,
+            last_success_at = CASE WHEN excluded.last_status = 'success' THEN excluded.last_checked_at ELSE share_model_health_state.last_success_at END,
+            last_failed_at = CASE WHEN excluded.last_status = 'failed' THEN excluded.last_checked_at ELSE share_model_health_state.last_failed_at END,
+            last_checked_at = excluded.last_checked_at,
+            recent_results_json = excluded.recent_results_json,
+            error_message = excluded.error_message,
+            updated_at = excluded.updated_at",
+        params![
+            check.share_id,
+            check.app_type,
+            check.requested_model,
+            check.actual_model,
+            status,
+            check.checked_at,
+            recent_json,
+            check.error_message,
+        ],
+    )
+    .map_err(|e| AppError::Internal(format!("upsert model health state failed: {e}")))?;
+    conn.execute(
+        "DELETE FROM share_model_health_checks WHERE checked_at < ?1",
+        params![Utc::now().timestamp() - 7 * 86_400],
+    )
+    .map_err(|e| AppError::Internal(format!("prune model health checks failed: {e}")))?;
+    Ok(())
+}
+
+fn recent_model_health_results(
+    conn: &Connection,
+    share_id: &str,
+    app_type: &str,
+    requested_model: &str,
+) -> Result<Vec<String>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT status
+             FROM share_model_health_checks
+             WHERE share_id = ?1 AND app_type = ?2 AND requested_model = ?3
+             ORDER BY checked_at DESC, id DESC
+             LIMIT 3",
+        )
+        .map_err(|e| {
+            AppError::Internal(format!("prepare recent model health results failed: {e}"))
+        })?;
+    let rows = stmt
+        .query_map(params![share_id, app_type, requested_model], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|e| {
+            AppError::Internal(format!("query recent model health results failed: {e}"))
+        })?;
+    collect_rows(rows)
+}
+
+fn parse_recent_results(value: String) -> Result<Vec<String>, rusqlite::Error> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str(&value).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err))
+    })
+}
+
+fn list_model_health_summaries(
+    conn: &Connection,
+) -> Result<HashMap<String, ShareModelHealthSummary>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT share_id, app_type, requested_model, actual_model, last_status,
+                    last_success_at, last_failed_at, last_checked_at, recent_results_json, error_message
+             FROM share_model_health_state
+             ORDER BY share_id ASC, app_type ASC, requested_model ASC",
+        )
+        .map_err(|e| AppError::Internal(format!("prepare model health summaries failed: {e}")))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                ModelHealthSummary {
+                    app_type: row.get(1)?,
+                    requested_model: row.get(2)?,
+                    actual_model: row.get(3)?,
+                    status: row.get(4)?,
+                    last_success_at: row.get(5)?,
+                    last_failed_at: row.get(6)?,
+                    last_checked_at: row.get(7)?,
+                    recent_results: parse_recent_results(row.get(8)?)?,
+                    error_message: row.get(9)?,
+                },
+            ))
+        })
+        .map_err(|e| AppError::Internal(format!("query model health summaries failed: {e}")))?;
+    let mut out = HashMap::<String, ShareModelHealthSummary>::new();
+    for row in rows {
+        let (share_id, summary) =
+            row.map_err(|e| AppError::Internal(format!("read model health summary failed: {e}")))?;
+        let bucket = out.entry(share_id).or_default();
+        match summary.app_type.as_str() {
+            "claude" => bucket.claude.push(summary),
+            "codex" => bucket.codex.push(summary),
+            "gemini" => bucket.gemini.push(summary),
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+fn filter_app_runtimes_by_model_health(
+    mut runtimes: ShareAppRuntimes,
+    health: &ShareModelHealthSummary,
+) -> ShareAppRuntimes {
+    runtimes.claude = filter_provider_models_by_health(runtimes.claude, &health.claude);
+    runtimes.codex = filter_provider_models_by_health(runtimes.codex, &health.codex);
+    runtimes.gemini = filter_provider_models_by_health(runtimes.gemini, &health.gemini);
+    runtimes
+}
+
+fn filter_provider_models_by_health(
+    provider: Option<ShareUpstreamProvider>,
+    health: &[ModelHealthSummary],
+) -> Option<ShareUpstreamProvider> {
+    let Some(mut provider) = provider else {
+        return None;
+    };
+    let healthy = health
+        .iter()
+        .filter(|entry| entry.status == "success")
+        .map(|entry| entry.requested_model.as_str())
+        .collect::<HashSet<_>>();
+    provider.models.retain(|model| {
+        healthy.contains(model.actual_model.as_str()) || healthy.contains(model.slot.as_str())
+    });
+    if health.is_empty() || provider.models.is_empty() {
+        None
+    } else {
+        Some(provider)
+    }
+}
+
+fn is_failed_market_model_log(log: &MarketRequestLogEntry) -> bool {
+    let status = log.status.to_ascii_lowercase();
+    if matches!(
+        status.as_str(),
+        "failed" | "error" | "rate_limited" | "upstream_error"
+    ) {
+        return true;
+    }
+    log.status_code
+        .map(|code| code == 429 || code >= 500)
+        .unwrap_or(false)
+}
+
 fn mask_share_token(token: &str) -> String {
     let mut chars = token.chars();
     let Some(first) = chars.next() else {
@@ -5740,13 +6142,13 @@ fn list_recent_share_request_logs(
                     request_model, request_agent, requested_model, actual_model, actual_model_source,
                     status_code, latency_ms, first_token_ms, input_tokens,
                     output_tokens, cache_read_tokens, cache_creation_tokens, is_streaming,
-                    session_id, user_country, user_country_iso3, created_at
+                    session_id, user_country, user_country_iso3, is_health_check, created_at
              FROM (
                  SELECT request_id, share_id, share_name, provider_id, provider_name, app_type, model,
                         request_model, request_agent, requested_model, actual_model, actual_model_source,
                         status_code, latency_ms, first_token_ms, input_tokens,
                         output_tokens, cache_read_tokens, cache_creation_tokens, is_streaming,
-                        session_id, user_country, user_country_iso3, created_at,
+                        session_id, user_country, user_country_iso3, is_health_check, created_at,
                         ROW_NUMBER() OVER (PARTITION BY share_id ORDER BY created_at DESC) AS row_num
                  FROM share_request_logs
              )
@@ -5780,7 +6182,8 @@ fn list_recent_share_request_logs(
                 session_id: row.get(20)?,
                 user_country: row.get(21)?,
                 user_country_iso3: row.get(22)?,
-                created_at: row.get(23)?,
+                is_health_check: row.get::<_, i64>(23)? != 0,
+                created_at: row.get(24)?,
             })
         })
         .map_err(|e| AppError::Internal(format!("query recent share request logs failed: {e}")))?;
@@ -6112,7 +6515,8 @@ fn get_market_by_email(
     email: &str,
 ) -> Result<Option<MarketRegistryRecord>, AppError> {
     conn.query_row(
-        "SELECT id, display_name, email, subdomain, public_base_url, scopes_json, status
+        "SELECT id, display_name, email, subdomain, public_base_url, scopes_json, status,
+                COALESCE(maintenance_enabled, 0), maintenance_message
          FROM router_markets
          WHERE email = ?1",
         params![email],
@@ -6125,6 +6529,8 @@ fn get_market_by_email(
                 public_base_url: row.get(4)?,
                 scopes: parse_string_vec(row.get(5)?)?,
                 status: row.get(6)?,
+                maintenance_enabled: row.get::<_, i64>(7)? != 0,
+                maintenance_message: row.get(8)?,
             })
         },
     )
@@ -6148,6 +6554,8 @@ fn list_dashboard_markets(
             "SELECT rm.id, rm.display_name, rm.email, rm.subdomain, rm.public_base_url, rm.status,
                     rm.created_at, rm.updated_at, rm.last_seen_at, rm.offline_since,
                     rm.pricing_json,
+                    COALESCE(rm.maintenance_enabled, 0) AS maintenance_enabled,
+                    rm.maintenance_message,
                     COALESCE(SUM(
                         CASE
                             WHEN ml.usage_amount_usd IS NOT NULL THEN
@@ -6160,7 +6568,8 @@ fn list_dashboard_markets(
              LEFT JOIN market_request_logs ml ON lower(ml.market_email) = lower(rm.email)
              WHERE rm.status IN ('active', 'offline', 'disabled')
              GROUP BY rm.id, rm.display_name, rm.email, rm.subdomain, rm.public_base_url, rm.status,
-                      rm.created_at, rm.updated_at, rm.last_seen_at, rm.offline_since, rm.pricing_json
+                      rm.created_at, rm.updated_at, rm.last_seen_at, rm.offline_since, rm.pricing_json,
+                      rm.maintenance_enabled, rm.maintenance_message
              ORDER BY rm.display_name ASC, rm.subdomain ASC",
         )
         .map_err(|e| AppError::Internal(format!("prepare dashboard markets failed: {e}")))?;
@@ -6175,6 +6584,8 @@ fn list_dashboard_markets(
                 status: row.get(5)?,
                 online: active_subdomains.contains(&subdomain),
                 can_manage: false,
+                maintenance_enabled: row.get::<_, i64>(11)? != 0,
+                maintenance_message: row.get(12)?,
                 created_at: row.get(6)?,
                 updated_at: row.get(7)?,
                 last_seen_at: row.get(8)?,
@@ -6185,8 +6596,8 @@ fn list_dashboard_markets(
                 parallel_capacity: 0,
                 online_minutes_24h: 0,
                 online_rate_24h: 0.0,
-                usage_tokens: row.get::<_, i64>(11)?.max(0) as u64,
-                usage_amount_usd: format!("{:.8}", row.get::<_, f64>(12)?.max(0.0)),
+                usage_tokens: row.get::<_, i64>(13)?.max(0) as u64,
+                usage_amount_usd: format!("{:.8}", row.get::<_, f64>(14)?.max(0.0)),
                 pricing_summary: parse_json_value(row.get(10)?)?,
                 health_checks: Vec::new(),
                 linked_shares: Vec::new(),
@@ -7741,6 +8152,8 @@ mod tests {
             public_base_url: "https://market-a.example.com".into(),
             scopes: vec!["market:shares:read".into(), "market:proxy:use".into()],
             status: "active".into(),
+            maintenance_enabled: false,
+            maintenance_message: None,
         }
     }
 
@@ -7972,6 +8385,7 @@ mod tests {
             user_country: None,
             user_country_iso3: None,
             created_at,
+            is_health_check: false,
         }
     }
 
@@ -9345,6 +9759,7 @@ mod tests {
                     user_country: None,
                     user_country_iso3: None,
                     created_at: Utc::now().timestamp(),
+                    is_health_check: false,
                 },
             )
             .expect("insert old share request log");
@@ -9356,6 +9771,8 @@ mod tests {
                 public_base_url: "https://market.example.com".into(),
                 scopes: vec![],
                 status: "active".into(),
+                maintenance_enabled: false,
+                maintenance_message: None,
             };
             upsert_market_request_log_tx(
                 &conn,
@@ -9496,6 +9913,7 @@ mod tests {
             user_country: None,
             user_country_iso3: None,
             created_at: Utc::now().timestamp(),
+            is_health_check: false,
         }];
 
         let timestamp_ms = Utc::now().timestamp_millis();

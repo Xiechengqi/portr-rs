@@ -5,7 +5,7 @@ import { Button, Card, Checkbox, Chip, Drawer, Input, ListBox, Modal, ProgressBa
 import * as React from "react";
 import { ConfirmAlertDialog } from "@/components/common/confirm-alert-dialog";
 import { useLocaleText } from "@/components/i18n/locale-provider";
-import { getMarketLinkedShares, updateMarketDisabledShares, updateShareSettings } from "@/lib/api";
+import { getMarketLinkedShares, updateMarketDisabledShares, updateMarketMaintenance, updateShareSettings } from "@/lib/api";
 import type { AppLocale } from "@/lib/i18n";
 import type { DashboardClient, DashboardMarket, HealthCheckEntry, MarketRequestLog, MarketShare, ShareAppRuntimes, ShareRequestLog, ShareSettingsPatch, ShareUpstreamProvider, ShareView } from "@/lib/types";
 import { compactTokens, formatDateTime, formatNumber, formatRelativeTime } from "@/lib/utils";
@@ -161,6 +161,10 @@ function formatShareStatus(value?: string) {
 function formatPlatformVersion(platform?: string, version?: string) {
   const platformLabel = (platform || "-").toLowerCase();
   const versionLabel = version ? String(version).replace(/^v/i, "") : "-";
+  const commitMatch = versionLabel.match(/^commit\s+([0-9a-f]{7,40})$/i);
+  if (commitMatch) {
+    return `${platformLabel}/${commitMatch[1].slice(0, 7)}`;
+  }
   return `${platformLabel}/${versionLabel}`;
 }
 
@@ -328,6 +332,47 @@ function ForSaleCell({ share, t }: { share?: ShareView; t: TFn }) {
   );
 }
 
+function modelHealthTone(share: ShareView, key: keyof ShareAppRuntimes) {
+  const entries = share.modelHealth?.[key] || [];
+  const results = entries.flatMap((entry) => (entry.recentResults || []).slice(0, 3));
+  if (!results.length) {
+    return {
+      className: "border-slate-200 bg-slate-50 text-muted-foreground",
+      label: "unknown",
+    };
+  }
+  const failures = results.filter((result) => result === "failed").length;
+  if (failures === results.length) {
+    return {
+      className: "border-red-200 bg-red-50 text-red-700",
+      label: "failed",
+    };
+  }
+  if (failures > 0) {
+    return {
+      className: "border-amber-200 bg-amber-50 text-amber-700",
+      label: "degraded",
+    };
+  }
+  return {
+    className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    label: "healthy",
+  };
+}
+
+function modelHealthTitle(share: ShareView, key: keyof ShareAppRuntimes) {
+  const entries = share.modelHealth?.[key] || [];
+  if (!entries.length) return "No model health checks yet";
+  return entries
+    .map((entry) => {
+      const recent = (entry.recentResults || []).join(" / ") || entry.status;
+      const checked = entry.lastCheckedAt ? formatDateTime(entry.lastCheckedAt * 1000) : "-";
+      const model = entry.requestedModel || entry.actualModel || "-";
+      return `${model}: ${recent} · ${checked}${entry.errorMessage ? ` · ${entry.errorMessage}` : ""}`;
+    })
+    .join("\n");
+}
+
 function SupportCell({ share, t }: { share?: ShareView; t: TFn }) {
   if (!share) return <span className="text-muted-foreground">-</span>;
   const rows: Array<[keyof ShareAppRuntimes, string]> = [["claude", "Claude"], ["codex", "Codex"], ["gemini", "Gemini"]];
@@ -339,12 +384,14 @@ function SupportCell({ share, t }: { share?: ShareView; t: TFn }) {
         const official = enabled && isOfficialRuntime(runtime);
         const firstLine = enabled ? (official ? quotaSummary(runtime) : runtimeModelSummary(runtime) || quotaSummary(runtime)) : "";
         const secondLine = enabled ? (official ? officialAccountSummary(runtime) : runtimeEndpointSummary(runtime) || runtime?.accountEmail || "") : "";
+        const tone = enabled ? modelHealthTone(share, key) : { className: "bg-slate-50 text-muted-foreground", label: "" };
         return (
-          <div key={key} className={`grid grid-cols-[56px_1fr] gap-2 rounded-lg border px-2 py-1.5 text-[11px] ${enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "bg-slate-50 text-muted-foreground"}`}>
+          <div key={key} title={enabled ? modelHealthTitle(share, key) : undefined} className={`grid grid-cols-[56px_1fr] gap-2 rounded-lg border px-2 py-1.5 text-[11px] ${tone.className}`}>
             <span className="font-mono uppercase">{label}</span>
             <span className="grid min-w-0 gap-0.5 text-right">
               <span className="whitespace-normal break-words font-semibold">{enabled ? firstLine || (official ? "Official" : t("dashboard.on")) : ""}</span>
               {enabled && secondLine ? <span className="whitespace-normal break-words text-[10px] font-medium opacity-75">{secondLine}</span> : null}
+              {enabled ? <span className="text-[10px] font-semibold uppercase opacity-70">{tone.label}</span> : null}
             </span>
           </div>
         );
@@ -921,7 +968,7 @@ function ShareStatusCell({ client, share, t, locale }: { client: DashboardClient
   }
   return (
     <div className="grid min-w-52 gap-2 text-sm">
-      <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.platform")}</span><strong>{formatPlatformVersion(client.installation.platform, client.installation.appVersion)}</strong></div>
+      <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.platform")}</span><strong className="whitespace-nowrap">{formatPlatformVersion(client.installation.platform, client.installation.appVersion)}</strong></div>
       <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.usage")}</span><div><strong>{compactTokens(share.tokensUsed)} / {isUnlimited(share.tokenLimit) ? "∞" : compactTokens(share.tokenLimit)}</strong><UsageBar used={share.tokensUsed} limit={share.tokenLimit} t={t} /></div></div>
       <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.expires")}</span><strong title={`${formatDateTime(share.createdAt)} / ${expiryTitle(share.expiresAt)}`}>{shareExpiryProgress(share, locale)}</strong></div>
       <div className={rowClass}><span className="mono-label text-muted-foreground">{t("dashboard.parallel")}</span><strong>{share.activeRequests || 0}<span className="text-muted-foreground">/{limit}</span></strong></div>
@@ -1148,6 +1195,7 @@ export function MarketsTable({ markets, onChanged }: { markets: DashboardMarket[
                       <div className="text-xs text-muted-foreground">{market.email}</div>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <StatusBadge active={market.online} label={marketStatusLabel(market, t)} />
+                        {market.maintenanceEnabled ? <Chip color="warning" size="sm" variant="soft">维护中</Chip> : null}
                         <MarketEditAction market={market} onEdit={setEditingMarket} />
                       </div>
                     </div>
@@ -1207,6 +1255,8 @@ function MarketEditDialog({ market, onClose, onSaved }: { market: DashboardMarke
   const [shares, setShares] = React.useState<MarketShare[]>([]);
   const [disabledIds, setDisabledIds] = React.useState<Set<string>>(new Set());
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [maintenanceEnabled, setMaintenanceEnabled] = React.useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const { t } = useLocaleText();
@@ -1214,6 +1264,8 @@ function MarketEditDialog({ market, onClose, onSaved }: { market: DashboardMarke
   const load = React.useCallback(async () => {
     if (!market) return;
     setError("");
+    setMaintenanceEnabled(!!market.maintenanceEnabled);
+    setMaintenanceMessage(market.maintenanceMessage || "");
     try {
       const nextShares = await getMarketLinkedShares(market.email);
       setShares(nextShares);
@@ -1237,6 +1289,25 @@ function MarketEditDialog({ market, onClose, onSaved }: { market: DashboardMarke
       setDisabledIds(new Set(nextIds));
       setSelectedIds(new Set());
       await load();
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveMaintenance() {
+    if (!market || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await updateMarketMaintenance(market.email, {
+        maintenanceEnabled,
+        maintenanceMessage: maintenanceEnabled ? maintenanceMessage : null,
+      });
+      setMaintenanceEnabled(response.maintenanceEnabled);
+      setMaintenanceMessage(response.maintenanceMessage || "");
       await onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1270,6 +1341,28 @@ function MarketEditDialog({ market, onClose, onSaved }: { market: DashboardMarke
                 <Info label={t("dashboard.shares")} value={`${shares.filter((share) => share.online).length} / ${shares.length}`} />
                 <Info label={t("dashboard.disabled")} value={disabledCount} />
               </div>
+              <Card className="rounded-lg border bg-amber-50/60 p-0 shadow-none">
+                <Card.Content className="grid gap-3 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <Checkbox isSelected={maintenanceEnabled} onChange={(value: boolean) => setMaintenanceEnabled(value)} isDisabled={busy}>
+                      <Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>
+                      <Checkbox.Content><span className="text-sm font-medium text-slate-900">维护模式</span></Checkbox.Content>
+                    </Checkbox>
+                    <Button size="sm" variant="outline" isDisabled={busy} onClick={saveMaintenance}>
+                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      保存维护模式
+                    </Button>
+                  </div>
+                  <FieldGroup label="维护提示">
+                    <TextArea
+                      value={maintenanceMessage}
+                      onChange={(event) => setMaintenanceMessage(event.target.value.slice(0, 240))}
+                      placeholder="Market 正在维护，预计稍后恢复。"
+                      disabled={busy || !maintenanceEnabled}
+                    />
+                  </FieldGroup>
+                </Card.Content>
+              </Card>
               <div className="flex flex-wrap items-center gap-2">
                 <Button size="sm" variant="outline" isDisabled={busy || selectedCount === 0} onClick={disableSelected}>
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -1414,6 +1507,7 @@ function ShareRequestLogs({ logs }: { logs: ShareRequestLog[] }) {
               <div className="min-w-0">
                 <div className="truncate font-medium">{requestModelRoute(log)}</div>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  {log.isHealthCheck ? <Chip color={log.statusCode >= 200 && log.statusCode < 400 ? "success" : "danger"} size="sm" variant="soft">健康检查</Chip> : null}
                   <span>{log.providerName || log.providerId || "-"}</span>
                   <span>{log.requestedModel || log.requestModel || "-"}</span>
                   <span title={formatDateTime(log.createdAt * 1000)}>{formatRelativeTime(log.createdAt * 1000)}</span>

@@ -128,6 +128,11 @@ function formatMarketFee(value?: string | number) {
 }
 
 function tickerDetail(meta?: TickerMeta) {
+  if (meta?.isHealthCheck) {
+    const model = meta.requestedModel || meta.requestModel || meta.actualModel || meta.model || "-";
+    const status = meta.statusCode ?? meta.status ?? "-";
+    return ["健康检查", meta.requestAgent || meta.appType || "", model, String(status), formatTickerLatency(meta.latencyMs)].filter(Boolean).join(" · ");
+  }
   const agent = meta?.requestAgent || "";
   const requested = meta?.requestedModel || meta?.requestModel || "";
   const actual = meta?.actualModel || meta?.model || "";
@@ -187,8 +192,17 @@ function RequestTicker({ data }: { data: DashboardResponse | null }) {
     <div className="absolute left-[1.6%] top-[3.5%] z-20 flex max-w-[min(68%,760px)] flex-col items-start gap-1.5">
       {events.map((event, index) => {
         const item = meta.get(event.requestId);
+        const mergedItem = event.isHealthCheck
+          ? {
+              ...(item || {}),
+              isHealthCheck: true,
+              requestAgent: event.healthAppType || item?.requestAgent || "",
+              requestedModel: event.healthModel || item?.requestedModel || item?.requestModel || "",
+              status: event.healthStatus || item?.status,
+            }
+          : item;
         const country = event.userCountry || event.countryCode || "--";
-        const subdomain = event.shareSubdomain || event.subdomain || event.shareName || item?.shareName || "share";
+        const subdomain = event.shareSubdomain || event.subdomain || event.shareName || mergedItem?.shareName || "share";
         const eventKey = [event.requestId, event.startedAt || event.createdAt || "", index].join(":");
         return (
           <div key={eventKey} className="flex max-w-full items-center gap-1 overflow-hidden rounded-md border border-slate-200/70 bg-white/55 px-2 py-1 text-[10px] text-slate-700 backdrop-blur-sm">
@@ -196,7 +210,7 @@ function RequestTicker({ data }: { data: DashboardResponse | null }) {
             <span>{countryFlag(country)}</span>
             <span className="font-semibold text-slate-600">{country}</span>
             <span className="font-semibold text-slate-500">{subdomain}</span>
-            <span className="truncate font-semibold text-slate-700/80">{tickerDetail(item)}</span>
+            <span className="truncate font-semibold text-slate-700/80">{tickerDetail(mergedItem)}</span>
           </div>
         );
       })}

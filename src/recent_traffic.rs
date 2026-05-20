@@ -51,6 +51,14 @@ pub struct RecentRequestEvent {
     /// snapshot time from the `inflight_request_ids` set, not stored on the
     /// event itself.
     pub is_inflight: bool,
+    #[serde(default)]
+    pub is_health_check: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_app_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_model: Option<String>,
 }
 
 #[derive(Default, Debug)]
@@ -123,6 +131,10 @@ impl RecentTraffic {
             user_country_iso3,
             started_at: Utc::now(),
             is_inflight: true,
+            is_health_check: false,
+            health_status: None,
+            health_app_type: None,
+            health_model: None,
         };
         let mut state = self.inner.write().await;
         state.inflight_request_ids.insert(request_id.clone());
@@ -132,6 +144,39 @@ impl RecentTraffic {
         // sustained load), forget the in-flight bit too — keeping it around
         // would leak memory once the matching `complete` arrives but the event
         // is already gone.
+        while state.events.len() > MAX_RETAINED {
+            if let Some(dropped) = state.events.pop_front() {
+                state.inflight_request_ids.remove(&dropped.request_id);
+            }
+        }
+    }
+
+    pub async fn record_health_check(
+        &self,
+        request_id: String,
+        share_id: String,
+        share_name: Option<String>,
+        share_subdomain: Option<String>,
+        status: String,
+        app_type: String,
+        model: String,
+    ) {
+        let event = RecentRequestEvent {
+            request_id,
+            share_id,
+            share_name,
+            share_subdomain,
+            user_country: None,
+            user_country_iso3: None,
+            started_at: Utc::now(),
+            is_inflight: false,
+            is_health_check: true,
+            health_status: Some(status),
+            health_app_type: Some(app_type),
+            health_model: Some(model),
+        };
+        let mut state = self.inner.write().await;
+        state.events.push_back(event);
         while state.events.len() > MAX_RETAINED {
             if let Some(dropped) = state.events.pop_front() {
                 state.inflight_request_ids.remove(&dropped.request_id);

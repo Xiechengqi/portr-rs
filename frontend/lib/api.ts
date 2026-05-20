@@ -55,6 +55,19 @@ export async function updateMarketDisabledShares(marketEmail: string, disabledSh
   );
 }
 
+export async function updateMarketMaintenance(
+  marketEmail: string,
+  input: { maintenanceEnabled: boolean; maintenanceMessage?: string | null },
+) {
+  return parseJson<{ ok: boolean; maintenanceEnabled: boolean; maintenanceMessage?: string }>(
+    await authFetch(`/v1/admin/markets/${encodeURIComponent(marketEmail)}/maintenance`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
 export async function getSettingsSchema() {
   return parseJson<SettingsSchema>(await authFetch("/v1/admin/settings/schema", { cache: "no-store" }));
 }

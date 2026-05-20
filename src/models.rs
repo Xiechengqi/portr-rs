@@ -548,6 +548,59 @@ pub struct ShareRequestLogEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_country_iso3: Option<String>,
     pub created_at: i64,
+    #[serde(default)]
+    pub is_health_check: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareModelHealthCheckEntry {
+    pub request_id: String,
+    pub share_id: String,
+    pub subdomain: String,
+    pub app_type: String,
+    pub requested_model: String,
+    pub actual_model: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    pub latency_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    pub checked_at: i64,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelHealthSummary {
+    pub app_type: String,
+    pub requested_model: String,
+    pub actual_model: String,
+    pub status: String,
+    #[serde(default)]
+    pub recent_results: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_checked_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_success_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failed_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareModelHealthSummary {
+    #[serde(default)]
+    pub claude: Vec<ModelHealthSummary>,
+    #[serde(default)]
+    pub codex: Vec<ModelHealthSummary>,
+    #[serde(default)]
+    pub gemini: Vec<ModelHealthSummary>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -606,6 +659,10 @@ pub struct PublicMarketConfig {
     pub subdomain: String,
     pub public_base_url: String,
     pub status: String,
+    #[serde(default)]
+    pub maintenance_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pricing_summary: Option<serde_json::Value>,
 }
@@ -619,6 +676,8 @@ pub struct MarketRegistryRecord {
     pub public_base_url: String,
     pub scopes: Vec<String>,
     pub status: String,
+    pub maintenance_enabled: bool,
+    pub maintenance_message: Option<String>,
 }
 
 impl MarketRegistryRecord {
@@ -709,6 +768,8 @@ pub struct MarketShareView {
     pub upstream_provider: Option<ShareUpstreamProvider>,
     #[serde(default)]
     pub app_runtimes: ShareAppRuntimes,
+    #[serde(default)]
+    pub model_health: ShareModelHealthSummary,
     /// Router-computed scheduling signals. Markets sort using these directly
     /// (no recomputation) and then layer their profile preferences on top.
     #[serde(default)]
@@ -765,6 +826,23 @@ pub struct MarketDisabledSharesUpdateRequest {
 pub struct MarketDisabledSharesUpdateResponse {
     pub ok: bool,
     pub disabled_share_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketMaintenanceUpdateRequest {
+    pub maintenance_enabled: bool,
+    #[serde(default)]
+    pub maintenance_message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketMaintenanceUpdateResponse {
+    pub ok: bool,
+    pub maintenance_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1034,6 +1112,10 @@ pub struct DashboardMarketView {
     pub online: bool,
     #[serde(default)]
     pub can_manage: bool,
+    #[serde(default)]
+    pub maintenance_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_message: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_seen_at: String,
@@ -1148,6 +1230,8 @@ pub struct ShareView {
     pub online_rate_24h: f64,
     pub recent_requests: Vec<ShareRequestLogEntry>,
     pub health_checks: Vec<HealthCheckEntry>,
+    #[serde(default)]
+    pub model_health: ShareModelHealthSummary,
 }
 
 #[derive(Debug, Deserialize)]

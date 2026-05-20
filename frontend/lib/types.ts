@@ -94,6 +94,7 @@ export type ShareView = {
   healthChecks?: HealthCheckEntry[];
   support?: ShareSupport;
   appRuntimes?: ShareAppRuntimes;
+  modelHealth?: ShareModelHealthSummary;
 };
 
 export type ShareSettingsPatch = {
@@ -141,6 +142,8 @@ export type DashboardMarket = {
   status: string;
   online: boolean;
   canManage?: boolean;
+  maintenanceEnabled?: boolean;
+  maintenanceMessage?: string;
   createdAt: string;
   updatedAt: string;
   lastSeenAt: string;
@@ -193,6 +196,7 @@ export type MarketShare = {
   marketDisabledAt?: string;
   support?: ShareSupport;
   appRuntimes?: ShareAppRuntimes;
+  modelHealth?: ShareModelHealthSummary;
 };
 
 export type ShareRequestLog = {
@@ -216,6 +220,7 @@ export type ShareRequestLog = {
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
   isStreaming?: boolean;
+  isHealthCheck?: boolean;
   createdAt: number;
 };
 
@@ -268,12 +273,34 @@ export type RecentRequestEvent = {
   latencyMs?: number;
   inputTokens?: number;
   outputTokens?: number;
+  isHealthCheck?: boolean;
+  healthStatus?: string;
+  healthAppType?: string;
+  healthModel?: string;
 };
 
 export type ShareSupport = {
   claude?: boolean;
   codex?: boolean;
   gemini?: boolean;
+};
+
+export type ModelHealthSummary = {
+  appType: string;
+  requestedModel: string;
+  actualModel: string;
+  status: "success" | "failed" | "skipped" | string;
+  recentResults?: string[];
+  lastCheckedAt?: number;
+  lastSuccessAt?: number;
+  lastFailedAt?: number;
+  errorMessage?: string;
+};
+
+export type ShareModelHealthSummary = {
+  claude?: ModelHealthSummary[];
+  codex?: ModelHealthSummary[];
+  gemini?: ModelHealthSummary[];
 };
 
 export type ShareUpstreamProvider = {

@@ -625,6 +625,7 @@ pub async fn proxy_handler(
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
         && path == "/_share-router/health";
+    let is_share_model_health_check = truthy_header(&parts.headers, "x-share-router-health-check");
     let is_legacy_share_router_ping =
         matches!(method, axum::http::Method::GET | axum::http::Method::HEAD)
             && truthy_header(&parts.headers, "x-share-router-ping-request");
@@ -749,7 +750,7 @@ pub async fn proxy_handler(
         .map(mask_token)
         .unwrap_or_else(|| "-".to_string());
 
-    let share_permit = if is_internal_share_router_path {
+    let share_permit = if is_internal_share_router_path || is_share_model_health_check {
         None
     } else if let Some(share_id) = route.share_id.as_deref() {
         match state
@@ -805,6 +806,7 @@ pub async fn proxy_handler(
     };
 
     let free_share_ip_permit = if !is_internal_share_router_path
+        && !is_share_model_health_check
         && route.is_free_share
         && state.config.free_share_ip_limit_enabled()
     {
@@ -839,25 +841,27 @@ pub async fn proxy_handler(
     // Record the request for the dashboard's demand/ticker stream and propagate the
     // generated identity downstream so share clients can write the same request id back
     // in their request logs.
-    let live_request_id = if !is_internal_share_router_path && !is_share_router_probe {
-        if let Some(share_id) = route.share_id.as_deref() {
-            Some(
-                state
-                    .recent_traffic
-                    .record(
-                        share_id.to_string(),
-                        route.share_name.clone(),
-                        Some(route.subdomain.clone()),
-                        client_metadata.country_code.clone(),
-                    )
-                    .await,
-            )
+    let live_request_id =
+        if !is_internal_share_router_path && !is_share_router_probe && !is_share_model_health_check
+        {
+            if let Some(share_id) = route.share_id.as_deref() {
+                Some(
+                    state
+                        .recent_traffic
+                        .record(
+                            share_id.to_string(),
+                            route.share_name.clone(),
+                            Some(route.subdomain.clone()),
+                            client_metadata.country_code.clone(),
+                        )
+                        .await,
+                )
+            } else {
+                None
+            }
         } else {
             None
-        }
-    } else {
-        None
-    };
+        };
     if let Some(ref request_id) = live_request_id {
         builder = builder.header("X-CC-Switch-Request-Id", request_id.as_str());
     }
